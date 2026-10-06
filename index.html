@@ -83,11 +83,11 @@ async function connect(speaker) {
   setState("thinking", "Listening");
   try {
     const r = await fetch(`${FN}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: N, t: T }) });
-    const { signed_url } = await r.json();
+    const { signed_url, internal } = await r.json();
     if (!signed_url) throw new Error("no session");
     convo = await Conversation.startSession({
       signedUrl: signed_url,
-      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent(), meeting_key: `${N}.${T}` },
+      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent(), meeting_key: `${N}.${T}`, meeting_internal: internal ? "yes" : "no (outsiders may be present)" },
       onModeChange: ({ mode }) => {
         setState(mode === "speaking" ? "speaking" : "", mode === "speaking" ? "Speaking" : "Listening");
         if (mode === "listening" && pending?.sent && convo) convo.setMicMuted(false);
