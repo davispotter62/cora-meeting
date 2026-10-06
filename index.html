@@ -138,17 +138,23 @@ function words(msg) {
   const d = msg?.transcript ?? msg?.data?.data ?? msg?.data ?? msg;
   const w = d?.words ?? [];
   const speaker = d?.speaker ?? d?.participant?.name ?? "";
+  const isHost = d?.participant?.is_host === true;
   const ev = String(msg?.event ?? "");
   const final = d?.is_final === false || /partial/.test(ev) ? false : true;
-  return { text: w.map((x) => x.text).join(" ").trim(), speaker, final };
+  return { text: w.map((x) => x.text).join(" ").trim(), speaker, final, isHost };
 }
 
 function connectTranscript() {
   const ws = new WebSocket("wss://meeting-data.bot.recall.ai/api/v1/transcript");
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
-    const { text, speaker, final } = words(msg);
+    const { text, speaker, final, isHost } = words(msg);
     if (!text || SELF.test(speaker)) return;
+    // Tell the server who is addressing Cora, so actions on Davis's behalf only follow the host.
+    if (final && WAKE.test(text)) {
+      fetch(`${FN}/heard`, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ meeting_key: `${N}.${T}`, speaker, is_host: isHost, text }) }).catch(() => {});
+    }
     heard(speaker, text, final);
   };
   ws.onclose = () => setTimeout(connectTranscript, 1500);
