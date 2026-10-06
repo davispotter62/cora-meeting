@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, height=720">
+<title>Cora · ForgeX</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600&family=Newsreader:opsz,wght@6..72,500&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #0b0f14; --panel: #121821; --line: #1f2733; --ink: #f4f6f8; --muted: #8a94a3; --lime: #d6ff3d; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; background: var(--bg); color: var(--ink); font-family: Geist, system-ui, sans-serif; }
+  .frame { position: absolute; inset: 0; padding: 56px 72px; display: flex; flex-direction: column; }
+  .top { display: flex; justify-content: space-between; color: var(--muted); font-size: 16px; margin-bottom: 28px; }
+  .top b { color: var(--ink); }
+  h1 { font-family: Newsreader, Georgia, serif; font-weight: 500; font-size: 52px; letter-spacing: -1px; line-height: 1.1; margin-bottom: 28px; }
+  ul.bullets { list-style: none; padding: 0; display: grid; gap: 18px; }
+  ul.bullets li { font-size: 28px; line-height: 1.3; padding-left: 28px; position: relative; }
+  ul.bullets li::before { content: ""; position: absolute; left: 0; top: 14px; width: 12px; height: 12px; background: var(--lime); }
+  .timeline { display: grid; gap: 10px; overflow: hidden; }
+  .row { display: grid; grid-template-columns: 120px 1fr 150px 140px; gap: 16px; align-items: center; background: var(--panel); border: 1px solid var(--line); padding: 14px 18px; font-size: 20px; }
+  .row .due { color: var(--lime); font-weight: 600; }
+  .row .owner, .row .stage { color: var(--muted); font-size: 17px; }
+  .row.late .due { color: #ff7a6b; }
+  iframe { flex: 1; border: 0; background: #fff; }
+  .idle { margin: auto; color: var(--muted); font-size: 24px; }
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="top"><span><b>ForgeX</b> · shared by Cora</span><span id="when"></span></div>
+  <div id="view" style="flex:1;display:flex;flex-direction:column"><div class="idle">Getting that ready…</div></div>
+</div>
+<script type="module">
+const FN = "https://cbtbnjbdcdqmvlolzdlt.supabase.co/functions/v1/cora-voice";
+const q = new URLSearchParams(location.search);
+const KEY = `${q.get("n")}.${q.get("t")}`;
+const view = document.getElementById("view");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No date";
+document.getElementById("when").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+let last = "";
+
+function render(d) {
+  if (!d) { view.innerHTML = '<div class="idle">Nothing on screen right now.</div>'; return; }
+  if (d.kind === "webpage") {
+    view.innerHTML = `<h1>${esc(d.title)}</h1><iframe src="${esc(d.url)}"></iframe>`;
+  } else if (d.kind === "program") {
+    const today = new Date().toISOString().slice(0, 10);
+    view.innerHTML = `<h1>${esc(d.title)}</h1><div class="timeline">` +
+      (d.tasks || []).slice(0, 9).map((t) => `<div class="row ${t.due && t.due < today ? "late" : ""}">
+        <span class="due">${fmt(t.due)}</span><span>${esc(t.task)}</span>
+        <span class="owner">${esc(t.owner || "")}</span><span class="stage">${esc(t.stage || "")}</span></div>`).join("") + "</div>";
+  } else {
+    view.innerHTML = `<h1>${esc(d.title)}</h1><ul class="bullets">` + (d.bullets || []).map((b) => `<li>${esc(b)}</li>`).join("") + "</ul>";
+  }
+}
+
+async function poll() {
+  try {
+    const r = await fetch(`${FN}/display`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ meeting_key: KEY }) });
+    const { display } = await r.json();
+    const s = JSON.stringify(display);
+    if (s !== last) { last = s; render(display); }
+  } catch {}
+  setTimeout(poll, 1500);
+}
+poll();
+</script>
+</body>
+</html>
