@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1280, height=720">
+<title>Cora</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #0b0f14; --panel: #121821; --ink: #f4f6f8; --muted: #8a94a3; --lime: #d6ff3d; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1280px; height: 720px; overflow: hidden; background: var(--bg); color: var(--ink); font-family: Geist, system-ui, sans-serif; }
+  .stage { position: relative; width: 1280px; height: 720px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; }
+  .orb { width: 220px; height: 220px; border-radius: 50%; display: grid; place-items: center; position: relative;
+         background: radial-gradient(circle at 35% 30%, #2a3443, #121821 70%); box-shadow: 0 0 0 2px #1f2733; }
+  .orb::after { content: ""; position: absolute; inset: -14px; border-radius: 50%; border: 3px solid var(--lime); opacity: 0; transform: scale(.92); transition: opacity .25s, transform .25s; }
+  .speaking .orb::after { opacity: 1; animation: pulse 1.1s ease-in-out infinite; }
+  .thinking .orb::after { opacity: .5; transform: scale(1); border-style: dashed; animation: spin 2.4s linear infinite; }
+  @keyframes pulse { 0%,100% { transform: scale(.96); } 50% { transform: scale(1.04); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .initial { font-size: 96px; font-weight: 600; letter-spacing: -2px; }
+  .name { font-size: 44px; font-weight: 600; letter-spacing: -.5px; text-align: center; }
+  .role { font-size: 20px; color: var(--muted); text-align: center; margin-top: 6px; }
+  .pill { display: inline-flex; align-items: center; gap: 10px; padding: 10px 18px; border-radius: 999px; background: var(--panel); font-size: 18px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .speaking .dot, .thinking .dot { background: var(--lime); }
+  .caption { position: absolute; bottom: 48px; left: 120px; right: 120px; text-align: center; font-size: 26px; line-height: 1.35; min-height: 72px; }
+  .brand { position: absolute; top: 32px; left: 40px; font-size: 18px; color: var(--muted); }
+  .brand b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="brand"><b>ForgeX</b> · AI Chief of Staff</div>
+  <div class="orb"><div class="initial">C</div></div>
+  <div>
+    <div class="name">Cora</div>
+    <div class="role">Say "Cora" and ask me anything</div>
+  </div>
+  <div class="pill"><span class="dot"></span><span id="status">Listening</span></div>
+  <div class="caption" id="caption"></div>
+</div>
+
+<script type="module">
+// Cora's in-meeting page. Recall.ai renders this as the bot's camera and gives it the meeting audio as
+// its microphone. We read Recall's live transcript and only open an ElevenLabs voice session when
+// someone says "Cora", so voice minutes are billed only while she is talking.
+import { Conversation } from "https://esm.sh/@elevenlabs/client@0";
+
+const FN = "https://cbtbnjbdcdqmvlolzdlt.supabase.co/functions/v1/cora-voice";
+const q = new URLSearchParams(location.search);
+const N = q.get("n"), T = q.get("t"), TITLE = q.get("title") || "a meeting";
+const WAKE = /\b(cora|kora|korah|corah|quora|coura|corra)\b/i;
+const SELF = /cora \(forgex/i;
+
+const stage = document.getElementById("stage");
+const statusEl = document.getElementById("status");
+const captionEl = document.getElementById("caption");
+const setState = (s, label) => { stage.className = "stage " + s; statusEl.textContent = label; };
+
+const transcript = [];   // [{speaker, text}]
+let convo = null, starting = false, captionTimer = null;
+
+function remember(speaker, text) {
+  transcript.push({ speaker, text });
+  while (transcript.length > 40) transcript.shift();
+}
+const recent = () => transcript.slice(-25).map((u) => `${u.speaker}: ${u.text}`).join("\n") || "(nothing yet)";
+
+function showCaption(text) {
+  captionEl.textContent = text;
+  clearTimeout(captionTimer);
+  captionTimer = setTimeout(() => (captionEl.textContent = ""), 9000);
+}
+
+async function wake(speaker, text) {
+  if (convo || starting) {
+    // Already in a session: ElevenLabs hears the follow-up itself.
+    return;
+  }
+  starting = true;
+  setState("thinking", "Thinking");
+  try {
+    const r = await fetch(`${FN}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: N, t: T }) });
+    const { signed_url } = await r.json();
+    if (!signed_url) throw new Error("no session");
+    convo = await Conversation.startSession({
+      signedUrl: signed_url,
+      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent() },
+      onModeChange: ({ mode }) => setState(mode === "speaking" ? "speaking" : "", mode === "speaking" ? "Speaking" : "Listening"),
+      onMessage: ({ source, message }) => { if (source === "ai" && message) showCaption(message); },
+      onDisconnect: () => { convo = null; setState("", "Listening"); },
+      onError: () => { convo = null; setState("", "Listening"); },
+    });
+    // The question was asked before the session opened, so hand it over as text right away.
+    convo.sendUserMessage(`${speaker || "Someone"} said: "${text}"`);
+  } catch (e) {
+    console.error(e);
+    convo = null;
+    setState("", "Listening");
+  } finally {
+    starting = false;
+  }
+}
+
+function words(msg) {
+  const d = msg?.transcript ?? msg?.data?.data ?? msg?.data ?? msg;
+  const w = d?.words ?? [];
+  const speaker = d?.speaker ?? d?.participant?.name ?? msg?.data?.data?.participant?.name ?? "";
+  return { text: w.map((x) => x.text).join(" ").trim(), speaker, final: !/partial/.test(msg?.event ?? "") };
+}
+
+function connectTranscript() {
+  const ws = new WebSocket("wss://meeting-data.bot.recall.ai/api/v1/transcript");
+  ws.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    const { text, speaker, final } = words(msg);
+    if (!text || SELF.test(speaker)) return;
+    if (final) remember(speaker || "Someone", text);
+    if (WAKE.test(text)) wake(speaker, text);
+  };
+  ws.onclose = () => setTimeout(connectTranscript, 1500);
+}
+
+if (!N || !T) setState("", "Not connected");
+else { setState("", "Listening"); connectTranscript(); }
+</script>
+</body>
+</html>
