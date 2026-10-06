@@ -60,6 +60,7 @@ const setState = (s, label) => { stage.className = "stage " + s; statusEl.textCo
 
 const transcript = [];   // [{speaker, text}]
 let convo = null, starting = false, captionTimer = null;
+let pending = null;      // the utterance that woke Cora: {speaker, text, timer, sent}
 
 function remember(speaker, text) {
   transcript.push({ speaker, text });
@@ -73,27 +74,30 @@ function showCaption(text) {
   captionTimer = setTimeout(() => (captionEl.textContent = ""), 9000);
 }
 
-async function wake(speaker, text) {
-  if (convo || starting) {
-    // Already in a session: ElevenLabs hears the follow-up itself.
-    return;
-  }
+// Speed: connect the moment we hear "Cora" (even mid-sentence), with the mic muted. When the speaker
+// finishes, hand over the full question as text and unmute for follow-ups. Avoids a double answer
+// from the voice channel and saves the connection time.
+async function connect(speaker) {
+  if (convo || starting) return;
   starting = true;
-  setState("thinking", "Thinking");
+  setState("thinking", "Listening");
   try {
     const r = await fetch(`${FN}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: N, t: T }) });
     const { signed_url } = await r.json();
     if (!signed_url) throw new Error("no session");
     convo = await Conversation.startSession({
       signedUrl: signed_url,
-      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent() },
-      onModeChange: ({ mode }) => setState(mode === "speaking" ? "speaking" : "", mode === "speaking" ? "Speaking" : "Listening"),
+      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent(), meeting_key: `${N}.${T}` },
+      onModeChange: ({ mode }) => {
+        setState(mode === "speaking" ? "speaking" : "", mode === "speaking" ? "Speaking" : "Listening");
+        if (mode === "listening" && pending?.sent && convo) convo.setMicMuted(false);
+      },
       onMessage: ({ source, message }) => { if (source === "ai" && message) showCaption(message); },
-      onDisconnect: () => { convo = null; setState("", "Listening"); },
-      onError: () => { convo = null; setState("", "Listening"); },
+      onDisconnect: () => { convo = null; pending = null; setState("", "Listening"); },
+      onError: () => { convo = null; pending = null; setState("", "Listening"); },
     });
-    // The question was asked before the session opened, so hand it over as text right away.
-    convo.sendUserMessage(`${speaker || "Someone"} said: "${text}"`);
+    convo.setMicMuted(true);
+    if (pending?.ready) send();
   } catch (e) {
     console.error(e);
     convo = null;
@@ -103,11 +107,40 @@ async function wake(speaker, text) {
   }
 }
 
+function send() {
+  if (!pending || pending.sent || !convo) return;
+  pending.sent = true;
+  setState("thinking", "Thinking");
+  convo.sendUserMessage(`${pending.speaker || "Someone"} said: "${pending.text}"`);
+}
+
+// The utterance is done when the transcript says it is final, or when it stops changing for 700ms.
+function settle() {
+  if (!pending) return;
+  pending.ready = true;
+  remember(pending.speaker || "Someone", pending.text);
+  send();
+}
+
+function heard(speaker, text, final) {
+  const waking = WAKE.test(text);
+  if (waking && !pending && !convo) pending = { speaker, text, sent: false, ready: false };
+  if (pending && !pending.ready && (speaker === pending.speaker || !speaker)) {
+    pending.text = text;
+    clearTimeout(pending.timer);
+    if (final) settle();
+    else pending.timer = setTimeout(settle, 700);
+  } else if (final) remember(speaker || "Someone", text);
+  if (waking) connect(speaker);
+}
+
 function words(msg) {
   const d = msg?.transcript ?? msg?.data?.data ?? msg?.data ?? msg;
   const w = d?.words ?? [];
-  const speaker = d?.speaker ?? d?.participant?.name ?? msg?.data?.data?.participant?.name ?? "";
-  return { text: w.map((x) => x.text).join(" ").trim(), speaker, final: !/partial/.test(msg?.event ?? "") };
+  const speaker = d?.speaker ?? d?.participant?.name ?? "";
+  const ev = String(msg?.event ?? "");
+  const final = d?.is_final === false || /partial/.test(ev) ? false : true;
+  return { text: w.map((x) => x.text).join(" ").trim(), speaker, final };
 }
 
 function connectTranscript() {
@@ -116,8 +149,7 @@ function connectTranscript() {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     const { text, speaker, final } = words(msg);
     if (!text || SELF.test(speaker)) return;
-    if (final) remember(speaker || "Someone", text);
-    if (WAKE.test(text)) wake(speaker, text);
+    heard(speaker, text, final);
   };
   ws.onclose = () => setTimeout(connectTranscript, 1500);
 }
