@@ -83,11 +83,11 @@ async function connect(speaker) {
   setState("thinking", "Listening");
   try {
     const r = await fetch(`${FN}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: N, t: T }) });
-    const { signed_url, internal } = await r.json();
+    const { signed_url, internal, room } = await r.json();
     if (!signed_url) throw new Error("no session");
     convo = await Conversation.startSession({
       signedUrl: signed_url,
-      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent(), meeting_key: `${N}.${T}`, meeting_internal: internal ? "yes" : "no (outsiders may be present)" },
+      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent(), meeting_key: `${N}.${T}`, meeting_internal: internal ? "yes" : "no (outsiders may be present)", meeting_room: room || "Unknown room: assume outsiders may be present." },
       onModeChange: ({ mode }) => {
         setState(mode === "speaking" ? "speaking" : "", mode === "speaking" ? "Speaking" : "Listening");
         if (mode === "listening" && pending?.sent && convo) convo.setMicMuted(false);
@@ -122,7 +122,7 @@ function settle() {
   send();
 }
 
-function heard(speaker, text, final) {
+let heard = function (speaker, text, final) {
   const waking = WAKE.test(text);
   if (waking && !pending && !convo) pending = { speaker, text, sent: false, ready: false };
   if (pending && !pending.ready && (speaker === pending.speaker || !speaker)) {
@@ -160,8 +160,36 @@ function connectTranscript() {
   ws.onclose = () => setTimeout(connectTranscript, 1500);
 }
 
+// Results Cora's team finishes during the call come back as a "say" queue. Speak each one at a
+// natural pause (nobody talking for 1.5s), never over a live conversation with Cora.
+let lastHeard = Date.now(), speakingOut = false;
+const _heard = heard;
+heard = (speaker, text, final) => { lastHeard = Date.now(); _heard(speaker, text, final); };
+async function sayLoop() {
+  try {
+    if (!convo && !starting && !speakingOut && Date.now() - lastHeard > 1500) {
+      const r = await fetch(`${FN}/say-next`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ meeting_key: `${N}.${T}` }) });
+      const { say } = await r.json();
+      if (say) {
+        speakingOut = true;
+        const a = await fetch(`${FN}/tts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ meeting_key: `${N}.${T}`, text: say }) });
+        if (a.ok) {
+          const audio = new Audio(URL.createObjectURL(await a.blob()));
+          setState("speaking", "Speaking");
+          showCaption(say);
+          remember("Cora", say);
+          await new Promise((done) => { audio.onended = done; audio.onerror = done; audio.play().catch(done); });
+        }
+        speakingOut = false;
+        setState("", "Listening");
+      }
+    }
+  } catch (e) { speakingOut = false; }
+  setTimeout(sayLoop, 2500);
+}
+
 if (!N || !T) setState("", "Not connected");
-else { setState("", "Listening"); connectTranscript(); }
+else { setState("", "Listening"); connectTranscript(); sayLoop(); }
 </script>
 </body>
 </html>
