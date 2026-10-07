@@ -62,6 +62,9 @@ const setState = (s, label) => { stage.className = "stage " + s; statusEl.textCo
 const transcript = [];   // [{speaker, text}]
 let convo = null, starting = false, captionTimer = null;
 let pending = null;      // the utterance that woke Cora: {speaker, text, timer, sent}
+let alreadySpoke = false; // Cora has spoken in this meeting (no second introduction)
+let followUntil = 0;      // after Cora answers, her asker can follow up without saying "Cora" again
+let idleTimer = null;     // close the session once Cora is done, so room talk never reaches her
 
 function remember(speaker, text) {
   transcript.push({ speaker, text });
@@ -88,14 +91,18 @@ async function connect(speaker) {
     if (!signed_url) throw new Error("no session");
     convo = await Conversation.startSession({
       signedUrl: signed_url,
-      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent(), meeting_key: `${N}.${T}`, meeting_internal: internal ? "yes" : "no (outsiders may be present)", meeting_room: room || "Unknown room: assume outsiders may be present." },
+      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent(), meeting_key: `${N}.${T}`, meeting_internal: internal ? "yes" : "no (outsiders may be present)", meeting_room: room || "Unknown room: assume outsiders may be present.", already_spoke: alreadySpoke ? "yes" : "no" },
+      // The mic stays muted for the whole session: Cora only hears what is addressed to her, as text.
+      // An open mic fed the whole room to her as one endless turn, so she never got to finish a task.
       onModeChange: ({ mode }) => {
         setState(mode === "speaking" ? "speaking" : "", mode === "speaking" ? "Speaking" : "Listening");
-        if (mode === "listening" && pending?.sent && convo) convo.setMicMuted(false);
+        if (mode === "speaking") alreadySpoke = true;
+        if (mode === "listening" && pending?.sent) followUntil = Date.now() + 12000;
+        touch();
       },
-      onMessage: ({ source, message }) => { if (source === "ai" && message) showCaption(message); },
-      onDisconnect: () => { convo = null; pending = null; setState("", "Listening"); },
-      onError: () => { convo = null; pending = null; setState("", "Listening"); },
+      onMessage: ({ source, message }) => { if (source === "ai" && message) { showCaption(message); remember("Cora", message); } touch(); },
+      onDisconnect: () => { convo = null; pending = null; clearTimeout(idleTimer); setState("", "Listening"); },
+      onError: () => { convo = null; pending = null; clearTimeout(idleTimer); setState("", "Listening"); },
     });
     convo.setMicMuted(true);
     if (pending?.ready) send();
@@ -113,6 +120,14 @@ function send() {
   pending.sent = true;
   setState("thinking", "Thinking");
   convo.sendUserMessage(`${pending.speaker || "Someone"} said: "${pending.text}"`);
+  touch();
+}
+
+// End the session after 30s with nothing from Cora and nobody talking to her. Tool calls keep it
+// alive (each agent message resets the clock), and saying "Cora" opens a fresh one.
+function touch() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => { if (convo) { try { convo.endSession(); } catch {} } }, 30000);
 }
 
 // The utterance is done when the transcript says it is final, or when it stops changing for 700ms.
@@ -125,6 +140,17 @@ function settle() {
 
 let heard = function (speaker, text, final) {
   const waking = WAKE.test(text);
+  // Session already open: pass along only what's addressed to Cora (her name, or her asker
+  // following up right after she answered). Everything else in the room stays out.
+  if (convo && pending?.sent) {
+    if (final && (waking || (Date.now() < followUntil && speaker === pending.speaker))) {
+      remember(speaker || "Someone", text);
+      convo.sendUserMessage(`${speaker || "Someone"} said: "${text}"`);
+      followUntil = 0;
+      touch();
+    } else if (final) remember(speaker || "Someone", text);
+    return;
+  }
   if (waking && !pending && !convo) pending = { speaker, text, sent: false, ready: false };
   if (pending && !pending.ready && (speaker === pending.speaker || !speaker)) {
     pending.text = text;
