@@ -16,7 +16,7 @@
   .face img, .face canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   /* One photo, brought to life in the canvas below: breathing always, a little more movement while talking. */
   #mouth { transform-origin: 50% 90%; animation: breathe 4.6s ease-in-out infinite; }
-  .face.talking #mouth { animation: sway 3.4s ease-in-out infinite; }
+  .face.talking.nosim #mouth { animation: sway 3.4s ease-in-out infinite; }
   @keyframes breathe { 0%,100% { transform: scale(1.01) translateY(0); } 50% { transform: scale(1.016) translateY(-2px); } }
   @keyframes sway { 0%,100% { transform: scale(1.014) translateY(0) rotate(0); } 30% { transform: scale(1.018) translateY(-3px) rotate(.35deg); } 65% { transform: scale(1.016) translateY(1px) rotate(-.3deg); } }
   .face::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 0 var(--lime); transition: box-shadow .25s; pointer-events: none; }
@@ -39,6 +39,7 @@
   <div class="face" id="face">
     <canvas id="mouth" width="1280" height="720"></canvas>
     <video id="sim" autoplay playsinline muted style="display:none"></video>
+    <video id="talk" src="cora-talk.mp4?v=3" muted playsinline preload="auto" style="display:none"></video>
     <audio id="simAudio" autoplay></audio>
   </div>
   <div class="shade"></div>
@@ -110,9 +111,10 @@ const mouth = (() => {
   const jawW = (x) => { const d = Math.abs(x - MX); return d < 48 ? 1 : d > 96 ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * (d - 48) / 48); };
   // Eyes: centre x, half width, lash line y, opening height.
   const EYES = [{ cx: 455, hw: 38, lash: 286, h: 23 }, { cx: 608, hw: 40, lash: 289, h: 22 }];
-  function draw(openPx, blink, live) {
+  function draw(openPx, blink, live, talk, mix) {
     if (live) return drawLive(live);
     if (!loaded) return;
+    if (talk && mix > 0.99) return drawWide(talk);
     // Sides: the photo's plain backdrop edges, mirrored outward, so the 16:9 frame has no seam.
     ctx.setTransform(-1, 0, 0, 1, 128, -CROP_Y);
     ctx.drawImage(img, 0, 0, 128, 1024, 0, 0, 128, 1024);
@@ -147,6 +149,9 @@ const mouth = (() => {
       }
     }
   }
+  function overlay(talk, mix) { if (!talk || mix <= 0.01) return; ctx.globalAlpha = mix; drawWide(talk); ctx.globalAlpha = 1; }
+  // The Runway talking clip is already 16:9, made from cora-wide.jpg (this exact layout), so it fills the frame as is.
+  function drawWide(v) { if (!v.videoWidth) return; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(v, 0, 0, 1280, 720); }
   // While Simli is streaming, its lip-synced video replaces the photo in the same full-frame layout
   // (assumes Simli keeps the photo's framing; it is generated from that same headshot).
   function drawLive(v) {
@@ -159,7 +164,7 @@ const mouth = (() => {
     ctx.setTransform(1, 0, 0, 1, 128, -CROP_Y);
     ctx.drawImage(v, 0, 0, v.videoWidth, v.videoHeight, 0, 0, 1024, 1024);
   }
-  return { draw };
+  return { draw, overlay };
 })();
 
 // ---- Simli: her photoreal, lip-synced face. Opened when she is woken (in parallel with her voice),
@@ -222,6 +227,10 @@ function trackAudio(el) {
   } catch (e) { ttsAnalyser = null; }
 }
 let lastVoice = -1e9, open = 0, lastLevelSeen = -1e9;
+const talkV = document.getElementById("talk");
+let talkOK = talkV.readyState >= 3, talkMix = 0, wasTalking = false;   // it may be ready before this module runs
+talkV.addEventListener("canplay", () => { talkOK = true; }, { once: true });
+talkV.addEventListener("error", () => { talkOK = false; });
 let blink = 0, nextBlink = performance.now() + 2500, blinkStart = 0;
 const MAX_OPEN = 9;   // px of jaw drop at full volume (fallback face only; Simli does the real lips)
 function avatarTick() {
@@ -247,7 +256,22 @@ function avatarTick() {
   blink = bt < 0 || bt > 1 ? 0 : Math.sin(Math.PI * bt);
   const talking = now - lastVoice < 900;
   const live = simliLive() ? simVideo : null;
-  mouth.draw(open * MAX_OPEN, blink, live);
+  // Runway talking clip: restart from frame 0 (identical to the photo) when she starts talking, loop
+  // while she talks, fade back to the photo when she stops.
+  if (talkOK && !live) {
+    if (talking && !wasTalking) { talkV.currentTime = 0; talkV.play().catch(() => {}); }
+    talkMix += ((talking ? 1 : 0) - talkMix) * (talking ? 0.6 : 0.2);
+    // Loop by hand: the clip's last frame isn't its first, so fade into the photo (= frame 0) over
+    // the final 0.35s, then restart from 0.
+    if (talking && talkV.duration && talkV.currentTime >= talkV.duration - 0.06) { talkV.currentTime = 0; talkV.play().catch(() => {}); }
+    if (!talking && talkMix < 0.01 && !talkV.paused) talkV.pause();
+  } else talkMix = 0;
+  wasTalking = talking;
+  const edge = talkV.duration ? Math.min(1, Math.max(0, (talkV.duration - talkV.currentTime) / 0.35)) : 1;
+  const mix = talkMix * edge;
+  const useTalk = talkOK && mix > 0.01 ? talkV : null;
+  mouth.draw(useTalk ? 0 : open * MAX_OPEN, useTalk ? 0 : blink, live, useTalk, mix);
+  if (!live && useTalk && mix <= 0.99) mouth.overlay(talkV, mix);
   face.classList.toggle("talking", talking);
 }
 setInterval(avatarTick, 33);   // a timer, not rAF: the bot's headless browser may throttle rAF
