@@ -10,48 +10,43 @@
   :root { --bg: #0b0f14; --panel: #121821; --ink: #f4f6f8; --muted: #8a94a3; --lime: #d6ff3d; }
   * { box-sizing: border-box; margin: 0; }
   html, body { width: 1280px; height: 720px; overflow: hidden; background: var(--bg); color: var(--ink); font-family: Geist, system-ui, sans-serif; }
-  .stage { position: relative; width: 1280px; height: 720px; display: flex; }
-  /* Cora's face: a looping "listening" clip, with a "talking" clip faded in while her voice plays. */
-  .face { position: relative; width: 720px; height: 720px; flex: none; overflow: hidden; background: #2a2622; }
-  .face img, .face video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
-  .face video { opacity: 0; }
-  .face video.on { opacity: 1; }
-  #idle { transition: opacity .3s ease; }
-  /* The talking face: her photo with the jaw moved in time with her voice (WebGL, see below). */
-  #mouth { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .3s ease; }
-  .face.gl #mouth { opacity: 1; }
-  .face.gl.talking #mouth { animation: sway 3.2s ease-in-out infinite; }
-  .face.talking #idle { opacity: 0; }
-  @keyframes sway { 0%,100% { transform: scale(1.012) translateY(0) rotate(0); } 33% { transform: scale(1.016) translateY(-3px) rotate(.25deg); } 66% { transform: scale(1.014) translateY(2px) rotate(-.2deg); } }
+  .stage { position: relative; width: 1280px; height: 720px; }
+  /* Full-frame webcam view: her photo cropped to 16:9, with a lower-third and subtitles on top. */
+  .face { position: absolute; inset: 0; overflow: hidden; background: #2a2622; }
+  .face img, .face canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  /* One photo, brought to life in the canvas below: breathing always, a little more movement while talking. */
+  #mouth { transform-origin: 50% 90%; animation: breathe 4.6s ease-in-out infinite; }
+  .face.talking #mouth { animation: sway 3.4s ease-in-out infinite; }
+  @keyframes breathe { 0%,100% { transform: scale(1.01) translateY(0); } 50% { transform: scale(1.016) translateY(-2px); } }
+  @keyframes sway { 0%,100% { transform: scale(1.014) translateY(0) rotate(0); } 30% { transform: scale(1.018) translateY(-3px) rotate(.35deg); } 65% { transform: scale(1.016) translateY(1px) rotate(-.3deg); } }
   .face::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 0 var(--lime); transition: box-shadow .25s; pointer-events: none; }
   .speaking .face::after { box-shadow: inset 0 0 0 5px var(--lime); }
   .thinking .face::after { box-shadow: inset 0 0 0 3px rgba(214,255,61,.45); }
-  .side { position: relative; flex: 1; padding: 40px 44px; display: flex; flex-direction: column; justify-content: center; gap: 22px; }
-  .brand { position: absolute; top: 32px; left: 44px; font-size: 18px; color: var(--muted); }
-  .brand b { color: var(--ink); }
-  .name { font-size: 44px; font-weight: 600; letter-spacing: -.5px; }
-  .role { font-size: 20px; color: var(--muted); margin-top: 6px; }
-  .pill { align-self: flex-start; display: inline-flex; align-items: center; gap: 10px; padding: 10px 18px; border-radius: 999px; background: var(--panel); font-size: 18px; color: var(--muted); }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .shade { position: absolute; left: 0; right: 0; bottom: 0; height: 300px; background: linear-gradient(to top, rgba(8,10,14,.82), rgba(8,10,14,0)); pointer-events: none; }
+  .lower { position: absolute; left: 44px; bottom: 40px; display: flex; align-items: center; gap: 18px; }
+  .name { font-size: 34px; font-weight: 600; letter-spacing: -.4px; }
+  .role { font-size: 18px; color: #c9d0d9; margin-top: 2px; }
+  .role b { color: var(--ink); font-weight: 600; }
+  .pill { display: inline-flex; align-items: center; gap: 9px; padding: 8px 15px; border-radius: 999px; background: rgba(18,24,33,.75); font-size: 16px; color: #c9d0d9; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
   .speaking .dot, .thinking .dot { background: var(--lime); }
-  .caption { font-size: 26px; line-height: 1.35; min-height: 140px; }
+  .caption { position: absolute; left: 160px; right: 160px; bottom: 132px; text-align: center; font-size: 28px; line-height: 1.35; text-shadow: 0 2px 8px rgba(0,0,0,.7); }
+  .caption:empty { display: none; }
 </style>
 </head>
 <body>
 <div class="stage" id="stage">
   <div class="face" id="face">
-    <img src="cora-1024.jpg?v=2" alt="Cora Whitley">
-    <video id="idle" src="cora-idle.mp4?v=1" muted loop playsinline autoplay preload="auto"></video>
-    <canvas id="mouth" width="1024" height="1024"></canvas>
+    <canvas id="mouth" width="1280" height="720"></canvas>
   </div>
-  <div class="side">
-    <div class="brand"><b>ForgeX</b> · AI Chief of Staff</div>
+  <div class="shade"></div>
+  <div class="caption" id="caption"></div>
+  <div class="lower">
     <div>
       <div class="name">Cora Whitley</div>
-      <div class="role" id="role">Say "Cora" and ask me anything</div>
+      <div class="role"><b>ForgeX</b> · AI Chief of Staff</div>
     </div>
     <div class="pill"><span class="dot"></span><span id="status">Listening</span></div>
-    <div class="caption" id="caption"></div>
   </div>
 </div>
 
@@ -91,67 +86,62 @@ function showCaption(text) {
   captionTimer = setTimeout(() => (captionEl.textContent = ""), 9000);
 }
 
-// ---- Avatar. Listening: a looping clip of her blinking and nodding (cora-idle.mp4, if present).
-// Talking: her photo drawn in WebGL with the jaw opened by the loudness of her voice, frame by frame,
-// so the mouth moves with each syllable and closes in the pauses. All of it runs in this page.
+// ---- Avatar. Everything comes from one photo drawn on a plain 2D canvas (no WebGL, no video, so it
+// renders the same in Recall's headless bot): breathing (CSS), blinks every few seconds, and the jaw
+// opened by the loudness of her voice, syllable by syllable.
 const face = document.getElementById("face");
-const idleV = document.getElementById("idle");
-idleV.addEventListener("canplay", () => { idleV.classList.add("on"); idleV.play().catch(() => {}); }, { once: true });
-idleV.addEventListener("error", () => idleV.remove());
-
 const mouth = (() => {
   const cv = document.getElementById("mouth");
-  const gl = cv.getContext("webgl", { premultipliedAlpha: false });
-  if (!gl) return null;
-  const vs = `attribute vec2 p; varying vec2 uv; void main(){ uv = vec2(p.x*.5+.5, .5-p.y*.5); gl_Position = vec4(p,0.,1.); }`;
-  // Coordinates are in the 1024px photo. The split line runs along the bottom of the upper teeth and
-  // curves up to the mouth corners. Everything below it (lower lip, chin) slides down by D, fading
-  // out toward the jawline; the gap that opens is the inside of the mouth.
-  const fs = `precision mediump float; varying vec2 uv; uniform sampler2D img; uniform float openPx;
-    void main(){
-      vec2 px = uv * 1024.;
-      float dx = px.x - 531.;
-      float split = 459. - 20. * pow(clamp(abs(dx) / 70., 0., 1.), 2.);
-      float wx = 1. - smoothstep(48., 96., abs(dx));
-      float wy = 1. - smoothstep(505., 585., px.y);
-      float D = openPx * wx;
-      vec4 col = texture2D(img, uv);
-      if (px.y > split && D > .01) {
-        float sy = px.y - D * wy;
-        if (sy < split) {
-          float g = (px.y - split) / max(D, 1.);              // 0 at the upper teeth, 1 at the lower lip
-          vec3 inside = mix(vec3(.16,.05,.06), vec3(.33,.12,.13), smoothstep(.0, .9, g) * (1. - smoothstep(30., 70., abs(dx))));
-          inside = mix(inside, vec3(.82,.79,.75), smoothstep(.72, 1., g) * .55 * (1. - smoothstep(25., 55., abs(dx)))); // lower teeth hint
-          float edge = smoothstep(0., 2.5, px.y - split);
-          col = vec4(mix(texture2D(img, vec2(uv.x, (split - .5) / 1024.)).rgb, inside, edge), 1.);
-        } else {
-          col = texture2D(img, vec2(uv.x, sy / 1024.));
+  const ctx = cv.getContext("2d");
+  const img = new Image();
+  let loaded = false;
+  img.onload = () => { loaded = true; };
+  img.src = "cora-1024.jpg?v=2";
+  // Photo coordinates (1024px). Jaw: everything under the upper teeth slides down by D, squeezed
+  // toward the chin; the gap that opens is drawn as the inside of the mouth.
+  const CROP_Y = 30;   // the 1024px photo sits centred at full size; rows 30..750 show (hair to lapels)
+  const MX = 531, TOP = 459, CHIN = 585;
+  const jawSplit = (x) => TOP - 20 * Math.min(1, Math.abs(x - MX) / 70) ** 2;
+  const jawW = (x) => { const d = Math.abs(x - MX); return d < 48 ? 1 : d > 96 ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * (d - 48) / 48); };
+  // Eyes: centre x, half width, lash line y, opening height.
+  const EYES = [{ cx: 455, hw: 38, lash: 286, h: 23 }, { cx: 608, hw: 40, lash: 289, h: 22 }];
+  function draw(openPx, blink) {
+    if (!loaded) return;
+    // Sides: the photo's plain backdrop edges, mirrored outward, so the 16:9 frame has no seam.
+    ctx.setTransform(-1, 0, 0, 1, 128, -CROP_Y);
+    ctx.drawImage(img, 0, 0, 128, 1024, 0, 0, 128, 1024);
+    ctx.setTransform(-1, 0, 0, 1, 2176, -CROP_Y);
+    ctx.drawImage(img, 976, 0, 48, 1024, 896, 0, 128, 1024);   // only the outer 48px: her shoulder reaches x≈930
+    ctx.setTransform(1, 0, 0, 1, 128, -CROP_Y);   // photo coordinates from here on
+    ctx.drawImage(img, 0, 0, 1024, 1024);
+    if (openPx > 0.3) {
+      for (let x = MX - 96; x < MX + 96; x += 2) {
+        const D = openPx * jawW(x);
+        if (D < 0.3) continue;
+        const sp = jawSplit(x);
+        const dx = Math.abs(x - MX);
+        const shade = 0.16 + 0.12 * Math.max(0, 1 - dx / 70);
+        const g = ctx.createLinearGradient(0, sp, 0, sp + D);
+        g.addColorStop(0, `rgb(${Math.round(255 * shade * .9)},${Math.round(255 * shade * .35)},${Math.round(255 * shade * .38)})`);
+        g.addColorStop(1, `rgb(${Math.round(255 * shade * 1.5)},${Math.round(255 * shade * .6)},${Math.round(255 * shade * .62)})`);
+        ctx.fillStyle = g;
+        ctx.fillRect(x, sp, 2, D + 1);
+        ctx.drawImage(img, x, sp, 2, CHIN - sp, x, sp + D, 2, CHIN - sp - D);
+      }
+    }
+    if (blink > 0.02) {
+      for (const e of EYES) {
+        for (let x = e.cx - e.hw; x < e.cx + e.hw; x += 2) {
+          const k = Math.max(0, 1 - ((x - e.cx) / e.hw) ** 2) ** 0.8;
+          const drop = blink * e.h * k;
+          if (drop < 0.3) continue;
+          // Stretch the eyelid skin and lashes down over the eye.
+          ctx.drawImage(img, x, e.lash - 16, 2, 18, x, e.lash - 16, 2, 18 + drop);
         }
       }
-      gl_FragColor = col;
-    }`;
-  const sh = (t, src) => { const o = gl.createShader(t); gl.shaderSource(o, src); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
-  const pr = gl.createProgram();
-  gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs));
-  gl.linkProgram(pr); gl.useProgram(pr);
-  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
-  const loc = gl.getAttribLocation(pr, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-  const uOpen = gl.getUniformLocation(pr, "openPx");
-  const tex = gl.createTexture();
-  let loaded = false;
-  const img = new Image();
-  img.onload = () => {
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-    loaded = true; draw(0);
-  };
-  img.src = "cora-1024.jpg?v=2";
-  function draw(openPx) { if (!loaded) return; gl.viewport(0, 0, 1024, 1024); gl.uniform1f(uOpen, openPx); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
-  return { draw, ok: () => loaded };
+    }
+  }
+  return { draw };
 })();
 
 let ac = null, ttsAnalyser = null, ttsBuf = null;
@@ -172,25 +162,35 @@ function trackAudio(el) {
     ac.resume?.();
   } catch (e) { ttsAnalyser = null; }
 }
-let lastVoice = -1e9, open = 0;
+let lastVoice = -1e9, open = 0, lastLevelSeen = -1e9;
+let blink = 0, nextBlink = performance.now() + 2500, blinkStart = 0;
 const MAX_OPEN = 24;  // px of jaw drop at full volume, in the 1024px photo
 function avatarTick() {
-  let level = ttsLevel();
-  try { if (convo) level = Math.max(level, (convo.getOutputVolume?.() || 0) * 0.5); } catch {}
   const now = performance.now();
-  if (level > 0.02) lastVoice = now;
-  // Fast open, slower close, like a real jaw. Small jitter so held vowels don't look frozen.
-  const target = Math.min(1, Math.max(0, (level - 0.015) * 7)) * (0.85 + 0.15 * Math.sin(now / 47));
-  open += (target - open) * (target > open ? 0.55 : 0.25);
-  const talking = now - lastVoice < 900;      // stay on the talking face through short pauses
-  if (mouth) {
-    face.classList.toggle("gl", talking || !idleV.isConnected || !idleV.classList.contains("on"));
-    mouth.draw(open * MAX_OPEN);
+  let level = ttsLevel();
+  try { if (convo) level = Math.max(level, convo.getOutputVolume?.() || 0); } catch {}
+  if (level > 0.02) { lastVoice = now; lastLevelSeen = now; }
+  const saying = stage.classList.contains("speaking");
+  let target = Math.min(1, Math.max(0, (level - 0.015) * 6));
+  // If she is speaking but no volume is reaching the page (live voice in some browsers), animate
+  // syllables on a speech-like rhythm so the mouth still moves.
+  if (saying && now - lastLevelSeen > 350) {
+    const t = now / 1000;
+    const syll = Math.abs(Math.sin(t * 2 * Math.PI * 2.3 + Math.sin(t * 1.3) * 1.8));
+    target = 0.15 + 0.75 * syll * (0.7 + 0.3 * Math.sin(t * 5.1));
+    lastVoice = now;
   }
+  target *= 0.88 + 0.12 * Math.sin(now / 47);
+  open += (target - open) * (target > open ? 0.5 : 0.22);
+  // Blink: 140ms close-open every 2.5-6s, sometimes a double.
+  if (now > nextBlink) { blinkStart = now; nextBlink = now + 2500 + Math.random() * 3500; if (Math.random() < .15) nextBlink = now + 320; }
+  const bt = (now - blinkStart) / 140;
+  blink = bt < 0 || bt > 1 ? 0 : Math.sin(Math.PI * bt);
+  const talking = now - lastVoice < 900;
+  mouth.draw(open * MAX_OPEN, blink);
   face.classList.toggle("talking", talking);
-  requestAnimationFrame(avatarTick);
 }
-requestAnimationFrame(avatarTick);
+setInterval(avatarTick, 33);   // a timer, not rAF: the bot's headless browser may throttle rAF
 // Local check: coraPlay("some.wav") plays a file through the face.
 window.coraPlay = async (url) => {
   const audio = new Audio(url); trackAudio(audio); setState("speaking", "Speaking");
