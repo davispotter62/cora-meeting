@@ -15,8 +15,6 @@
   .face { position: absolute; inset: 0; overflow: hidden; background: #2a2622; }
   .face img, .face canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   /* One photo, brought to life in the canvas below: breathing always, a little more movement while talking. */
-  #mouth { transform-origin: 50% 90%; animation: breathe 4.6s ease-in-out infinite; }
-  .face.talking.nosim #mouth { animation: sway 3.4s ease-in-out infinite; }
   @keyframes breathe { 0%,100% { transform: scale(1.01) translateY(0); } 50% { transform: scale(1.016) translateY(-2px); } }
   @keyframes sway { 0%,100% { transform: scale(1.014) translateY(0) rotate(0); } 30% { transform: scale(1.018) translateY(-3px) rotate(.35deg); } 65% { transform: scale(1.016) translateY(1px) rotate(-.3deg); } }
   .face::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 0 var(--lime); transition: box-shadow .25s; pointer-events: none; }
@@ -102,69 +100,39 @@ const mouth = (() => {
   const img = new Image();
   let loaded = false;
   img.onload = () => { loaded = true; };
-  img.src = "cora-1024.jpg?v=2";
-  // Photo coordinates (1024px). Jaw: everything under the upper teeth slides down by D, squeezed
-  // toward the chin; the gap that opens is drawn as the inside of the mouth.
-  const CROP_Y = 30;   // the 1024px photo sits centred at full size; rows 30..750 show (hair to lapels)
-  const MX = 531, TOP = 459, CHIN = 585;
-  const jawSplit = (x) => TOP - 20 * Math.min(1, Math.abs(x - MX) / 70) ** 2;
-  const jawW = (x) => { const d = Math.abs(x - MX); return d < 48 ? 1 : d > 96 ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * (d - 48) / 48); };
-  // Eyes: centre x, half width, lash line y, opening height.
-  const EYES = [{ cx: 455, hw: 38, lash: 286, h: 23 }, { cx: 608, hw: 40, lash: 289, h: 22 }];
-  function draw(openPx, blink, live, talk, mix) {
-    if (live) return drawLive(live);
+  img.src = "cora-lobby.jpg?v=1";   // 1280x720, the full frame
+  // Her Simli face was built from the square of this photo around her head: x 292.6, width 714.4, full height.
+  const SQ_X = 292.6, SQ_W = 714.4, FEATHER = 36;
+  // Eyes in the 1280x720 photo: centre x, half width, lash line y, opening height.
+  const EYES = [{ cx: 585, hw: 27, lash: 227, h: 14 }, { cx: 703, hw: 31, lash: 226, h: 14 }];
+  function draw(openPx, blink, live) {
     if (!loaded) return;
-    if (talk && mix > 0.99) return drawWide(talk);
-    // Sides: the photo's plain backdrop edges, mirrored outward, so the 16:9 frame has no seam.
-    ctx.setTransform(-1, 0, 0, 1, 128, -CROP_Y);
-    ctx.drawImage(img, 0, 0, 128, 1024, 0, 0, 128, 1024);
-    ctx.setTransform(-1, 0, 0, 1, 2176, -CROP_Y);
-    ctx.drawImage(img, 976, 0, 48, 1024, 896, 0, 128, 1024);   // only the outer 48px: her shoulder reaches x≈930
-    ctx.setTransform(1, 0, 0, 1, 128, -CROP_Y);   // photo coordinates from here on
-    ctx.drawImage(img, 0, 0, 1024, 1024);
-    if (openPx > 0.3) {
-      for (let x = MX - 96; x < MX + 96; x += 2) {
-        const D = openPx * jawW(x);
-        if (D < 0.3) continue;
-        const sp = jawSplit(x);
-        const dx = Math.abs(x - MX);
-        const shade = 0.30 + 0.12 * Math.max(0, 1 - dx / 70);
-        const g = ctx.createLinearGradient(0, sp, 0, sp + D);
-        g.addColorStop(0, `rgb(${Math.round(255 * shade * .9)},${Math.round(255 * shade * .35)},${Math.round(255 * shade * .38)})`);
-        g.addColorStop(1, `rgb(${Math.round(255 * shade * 1.5)},${Math.round(255 * shade * .6)},${Math.round(255 * shade * .62)})`);
-        ctx.fillStyle = g;
-        ctx.fillRect(x, sp, 2, D + 1);
-        ctx.drawImage(img, x, sp, 2, CHIN - sp, x, sp + D, 2, CHIN - sp - D);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.drawImage(img, 0, 0, 1280, 720);
+    if (live && live.videoWidth) {
+      ctx.drawImage(live, SQ_X, 0, SQ_W, 720);
+      // Blend the square's left and right edges into the lobby photo.
+      for (let i = 0; i < FEATHER; i += 2) {
+        ctx.globalAlpha = 1 - i / FEATHER;
+        ctx.drawImage(img, SQ_X + i, 0, 2, 720, SQ_X + i, 0, 2, 720);
+        ctx.drawImage(img, SQ_X + SQ_W - 2 - i, 0, 2, 720, SQ_X + SQ_W - 2 - i, 0, 2, 720);
       }
+      ctx.globalAlpha = 1;
+      return;
     }
     if (blink > 0.02) {
       for (const e of EYES) {
-        for (let x = e.cx - e.hw; x < e.cx + e.hw; x += 2) {
+        for (let x = e.cx - e.hw; x < e.cx + e.hw; x += 1) {
           const k = Math.max(0, 1 - ((x - e.cx) / e.hw) ** 2) ** 0.8;
           const drop = blink * e.h * k;
           if (drop < 0.3) continue;
-          // Stretch the eyelid skin and lashes down over the eye.
-          ctx.drawImage(img, x, e.lash - 16, 2, 18, x, e.lash - 16, 2, 18 + drop);
+          ctx.drawImage(img, x, e.lash - 9, 1, 10, x, e.lash - 9, 1, 10 + drop);   // eyelid down over the eye
         }
       }
     }
   }
-  function overlay(talk, mix) { if (!talk || mix <= 0.01) return; ctx.globalAlpha = mix; drawWide(talk); ctx.globalAlpha = 1; }
-  // The Runway talking clip is already 16:9, made from cora-wide.jpg (this exact layout), so it fills the frame as is.
-  function drawWide(v) { if (!v.videoWidth) return; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(v, 0, 0, 1280, 720); }
-  // While Simli is streaming, its lip-synced video replaces the photo in the same full-frame layout
-  // (assumes Simli keeps the photo's framing; it is generated from that same headshot).
-  function drawLive(v) {
-    const k = v.videoWidth / 1024;
-    if (!k) return;
-    ctx.setTransform(-1, 0, 0, 1, 128, -CROP_Y);
-    ctx.drawImage(v, 0, 0, 128 * k, 1024 * k, 0, 0, 128, 1024);
-    ctx.setTransform(-1, 0, 0, 1, 2176, -CROP_Y);
-    ctx.drawImage(v, 976 * k, 0, 48 * k, 1024 * k, 896, 0, 128, 1024);
-    ctx.setTransform(1, 0, 0, 1, 128, -CROP_Y);
-    ctx.drawImage(v, 0, 0, v.videoWidth, v.videoHeight, 0, 0, 1024, 1024);
-  }
-  return { draw, overlay };
+  return { draw, overlay() {} };
 })();
 
 // ---- Simli: her photoreal, lip-synced face. Opened when she is woken (in parallel with her voice),
@@ -202,7 +170,7 @@ function simliStart() {
   })();
   return simliStarting;
 }
-function simliStopSoon(ms = 5000) {
+function simliStopSoon(ms = 20000) {
   clearTimeout(simliStopTimer);
   simliStopTimer = setTimeout(() => { const c = simli; simli = null; simliReady = false; try { c?.stop(); } catch {} }, ms);
 }
@@ -270,8 +238,7 @@ function avatarTick() {
   const edge = talkV.duration ? Math.min(1, Math.max(0, (talkV.duration - talkV.currentTime) / 0.35)) : 1;
   const mix = talkMix * edge;
   const useTalk = talkOK && mix > 0.01 ? talkV : null;
-  mouth.draw(useTalk ? 0 : open * MAX_OPEN, useTalk ? 0 : blink, live, useTalk, mix);
-  if (!live && useTalk && mix <= 0.99) mouth.overlay(talkV, mix);
+  mouth.draw(0, blink, live);
   face.classList.toggle("talking", talking);
 }
 setInterval(avatarTick, 33);   // a timer, not rAF: the bot's headless browser may throttle rAF
