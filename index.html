@@ -139,6 +139,7 @@ const mouth = (() => {
 // fed her voice audio, and closed a few seconds after she finishes, since Simli bills per minute.
 // If it isn't configured or fails, the photo face above carries on.
 const simVideo = document.getElementById("sim"), simAudio = document.getElementById("simAudio");
+const SIMLI_MODE = q.get("simlimode") || "livekit";
 let simli = null, simliReady = false, simliStarting = null, simliOff = false, simliStopTimer = null;
 const b64ToU8 = (b64) => { const s = atob(b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };
 function simliStart() {
@@ -151,11 +152,11 @@ function simliStart() {
       const r = await fetch(`${FN}/simli-token`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: N, t: T }) });
       const d = await r.json();
       if (!d.session_token) { if (d.error === "simli_not_configured") simliOff = true; return false; }
-      const c = new SimliClient(d.session_token, simVideo, simAudio, null, LogLevel.ERROR, "livekit");
+      const c = new SimliClient(d.session_token, simVideo, simAudio, null, q.get("simlidebug") ? LogLevel.DEBUG : LogLevel.ERROR, SIMLI_MODE);
       const ok = await new Promise((res) => {
         c.on("start", () => res(true));
-        c.on("startup_error", () => res(false));
-        c.on("error", () => res(false));
+        c.on("startup_error", (m) => { console.warn("simli startup_error", m); res(false); });
+        c.on("error", (m) => { console.warn("simli error", m); res(false); });
         c.start().catch(() => res(false));
         setTimeout(() => res(false), 9000);
       });
@@ -242,6 +243,15 @@ function avatarTick() {
   face.classList.toggle("talking", talking);
 }
 setInterval(avatarTick, 33);   // a timer, not rAF: the bot's headless browser may throttle rAF
+// Local check of the Simli face: coraSimliTest("test-voice.pcm") (16kHz 16-bit mono PCM).
+window.coraSimliTest = async (url) => {
+  const ok = await simliStart(); if (!ok) return "simli failed";
+  const pcm = new Uint8Array(await (await fetch(url)).arrayBuffer());
+  setState("speaking", "Speaking");
+  for (let i = 0; i < pcm.length; i += 6000) simli.sendAudioData(pcm.subarray(i, i + 6000));
+  setTimeout(() => setState("", "Listening"), pcm.length / 32 + 500);
+  return "sent " + pcm.length;
+};
 // Local check: coraPlay("some.wav") plays a file through the face.
 window.coraPlay = async (url) => {
   const audio = new Audio(url); trackAudio(audio); setState("speaking", "Speaking");
