@@ -38,6 +38,8 @@
 <div class="stage" id="stage">
   <div class="face" id="face">
     <canvas id="mouth" width="1280" height="720"></canvas>
+    <video id="sim" autoplay playsinline muted style="display:none"></video>
+    <audio id="simAudio" autoplay></audio>
   </div>
   <div class="shade"></div>
   <div class="caption" id="caption"></div>
@@ -55,6 +57,8 @@
 // its microphone. We read Recall's live transcript and only open an ElevenLabs voice session when
 // someone says "Cora", so voice minutes are billed only while she is talking.
 import { Conversation } from "https://esm.sh/@elevenlabs/client@0";
+// simli-client 3.0.2, bundled locally (the CDNs can't build it: a filename-case bug in the package).
+import { SimliClient, LogLevel } from "./simli-3.0.2.js";
 
 const FN = "https://cbtbnjbdcdqmvlolzdlt.supabase.co/functions/v1/cora-voice";
 const q = new URLSearchParams(location.search);
@@ -72,7 +76,8 @@ let convo = null, starting = false, captionTimer = null;
 let pending = null;      // the utterance that woke Cora: {speaker, text, timer, sent}
 let alreadySpoke = false; // Cora has spoken in this meeting (no second introduction)
 let followUntil = 0;      // after Cora answers, her asker can follow up without saying "Cora" again
-let idleTimer = null;     // close the session once Cora is done, so room talk never reaches her
+let idleTimer = null;
+let voiceMuted = false;   // the SDK's speaker is muted because Simli is playing her voice     // close the session once Cora is done, so room talk never reaches her
 
 function remember(speaker, text) {
   transcript.push({ speaker, text });
@@ -105,7 +110,8 @@ const mouth = (() => {
   const jawW = (x) => { const d = Math.abs(x - MX); return d < 48 ? 1 : d > 96 ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * (d - 48) / 48); };
   // Eyes: centre x, half width, lash line y, opening height.
   const EYES = [{ cx: 455, hw: 38, lash: 286, h: 23 }, { cx: 608, hw: 40, lash: 289, h: 22 }];
-  function draw(openPx, blink) {
+  function draw(openPx, blink, live) {
+    if (live) return drawLive(live);
     if (!loaded) return;
     // Sides: the photo's plain backdrop edges, mirrored outward, so the 16:9 frame has no seam.
     ctx.setTransform(-1, 0, 0, 1, 128, -CROP_Y);
@@ -120,7 +126,7 @@ const mouth = (() => {
         if (D < 0.3) continue;
         const sp = jawSplit(x);
         const dx = Math.abs(x - MX);
-        const shade = 0.16 + 0.12 * Math.max(0, 1 - dx / 70);
+        const shade = 0.30 + 0.12 * Math.max(0, 1 - dx / 70);
         const g = ctx.createLinearGradient(0, sp, 0, sp + D);
         g.addColorStop(0, `rgb(${Math.round(255 * shade * .9)},${Math.round(255 * shade * .35)},${Math.round(255 * shade * .38)})`);
         g.addColorStop(1, `rgb(${Math.round(255 * shade * 1.5)},${Math.round(255 * shade * .6)},${Math.round(255 * shade * .62)})`);
@@ -141,8 +147,61 @@ const mouth = (() => {
       }
     }
   }
+  // While Simli is streaming, its lip-synced video replaces the photo in the same full-frame layout
+  // (assumes Simli keeps the photo's framing; it is generated from that same headshot).
+  function drawLive(v) {
+    const k = v.videoWidth / 1024;
+    if (!k) return;
+    ctx.setTransform(-1, 0, 0, 1, 128, -CROP_Y);
+    ctx.drawImage(v, 0, 0, 128 * k, 1024 * k, 0, 0, 128, 1024);
+    ctx.setTransform(-1, 0, 0, 1, 2176, -CROP_Y);
+    ctx.drawImage(v, 976 * k, 0, 48 * k, 1024 * k, 896, 0, 128, 1024);
+    ctx.setTransform(1, 0, 0, 1, 128, -CROP_Y);
+    ctx.drawImage(v, 0, 0, v.videoWidth, v.videoHeight, 0, 0, 1024, 1024);
+  }
   return { draw };
 })();
+
+// ---- Simli: her photoreal, lip-synced face. Opened when she is woken (in parallel with her voice),
+// fed her voice audio, and closed a few seconds after she finishes, since Simli bills per minute.
+// If it isn't configured or fails, the photo face above carries on.
+const simVideo = document.getElementById("sim"), simAudio = document.getElementById("simAudio");
+let simli = null, simliReady = false, simliStarting = null, simliOff = false, simliStopTimer = null;
+const b64ToU8 = (b64) => { const s = atob(b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };
+function simliStart() {
+  clearTimeout(simliStopTimer);
+  if (simliOff || !N) return Promise.resolve(false);
+  if (simliReady) return Promise.resolve(true);
+  if (simliStarting) return simliStarting;
+  simliStarting = (async () => {
+    try {
+      const r = await fetch(`${FN}/simli-token`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: N, t: T }) });
+      const d = await r.json();
+      if (!d.session_token) { if (d.error === "simli_not_configured") simliOff = true; return false; }
+      const c = new SimliClient(d.session_token, simVideo, simAudio, null, LogLevel.ERROR, "livekit");
+      const ok = await new Promise((res) => {
+        c.on("start", () => res(true));
+        c.on("startup_error", () => res(false));
+        c.on("error", () => res(false));
+        c.start().catch(() => res(false));
+        setTimeout(() => res(false), 9000);
+      });
+      if (!ok) { try { c.stop(); } catch {} return false; }
+      c.on("stop", () => { if (simli === c) { simli = null; simliReady = false; } });
+      c.sendAudioData(new Uint8Array(6000));   // primes the stream, as Simli's own samples do
+      simli = c; simliReady = true;
+      simVideo.play().catch(() => {});
+      return true;
+    } catch (e) { console.error("simli", e); return false; }
+    finally { simliStarting = null; }
+  })();
+  return simliStarting;
+}
+function simliStopSoon(ms = 5000) {
+  clearTimeout(simliStopTimer);
+  simliStopTimer = setTimeout(() => { const c = simli; simli = null; simliReady = false; try { c?.stop(); } catch {} }, ms);
+}
+const simliLive = () => simliReady && simVideo.videoWidth > 0 && simVideo.readyState >= 2;
 
 let ac = null, ttsAnalyser = null, ttsBuf = null;
 function ttsLevel() {
@@ -164,7 +223,7 @@ function trackAudio(el) {
 }
 let lastVoice = -1e9, open = 0, lastLevelSeen = -1e9;
 let blink = 0, nextBlink = performance.now() + 2500, blinkStart = 0;
-const MAX_OPEN = 24;  // px of jaw drop at full volume, in the 1024px photo
+const MAX_OPEN = 9;   // px of jaw drop at full volume (fallback face only; Simli does the real lips)
 function avatarTick() {
   const now = performance.now();
   let level = ttsLevel();
@@ -187,7 +246,8 @@ function avatarTick() {
   const bt = (now - blinkStart) / 140;
   blink = bt < 0 || bt > 1 ? 0 : Math.sin(Math.PI * bt);
   const talking = now - lastVoice < 900;
-  mouth.draw(open * MAX_OPEN, blink);
+  const live = simliLive() ? simVideo : null;
+  mouth.draw(open * MAX_OPEN, blink, live);
   face.classList.toggle("talking", talking);
 }
 setInterval(avatarTick, 33);   // a timer, not rAF: the bot's headless browser may throttle rAF
@@ -214,6 +274,7 @@ async function connect(speaker) {
   if (convo || starting) return;
   starting = true;
   setState("thinking", "Listening");
+  simliStart();
   try {
     const r = await fetch(`${FN}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: N, t: T }) });
     const { signed_url, internal, room } = await r.json();
@@ -229,16 +290,24 @@ async function connect(speaker) {
         if (mode === "listening" && pending?.sent) followUntil = Date.now() + 12000;
         touch();
       },
+      // Her voice goes to Simli (which plays it with synced lips); the SDK's own playback is muted
+      // while Simli is up, so she is never heard twice.
+      onAudio: (b64) => {
+        if (simliReady) { simli.sendAudioData(b64ToU8(b64)); if (!voiceMuted) { convo?.setVolume({ volume: 0 }); voiceMuted = true; } }
+        else if (voiceMuted) { convo?.setVolume({ volume: 1 }); voiceMuted = false; }
+      },
       onMessage: ({ source, message }) => { if (source === "ai" && message) { showCaption(message); remember("Cora", message); } touch(); },
-      onDisconnect: () => { convo = null; pending = null; clearTimeout(idleTimer); setState("", "Listening"); },
-      onError: () => { convo = null; pending = null; clearTimeout(idleTimer); setState("", "Listening"); },
+      onDisconnect: () => { convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
+      onError: () => { convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
     });
     convo.setMicMuted(true);
+    if (simliReady) { convo.setVolume({ volume: 0 }); voiceMuted = true; }
     if (pending?.ready) send();
   } catch (e) {
     console.error(e);
     convo = null;
     setState("", "Listening");
+    simliStopSoon(1000);
   } finally {
     starting = false;
   }
@@ -328,8 +397,18 @@ async function sayLoop() {
       const { say } = await r.json();
       if (say) {
         speakingOut = true;
-        const a = await fetch(`${FN}/tts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ meeting_key: `${N}.${T}`, text: say }) });
-        if (a.ok) {
+        const viaSimli = await simliStart();
+        const a = await fetch(`${FN}/tts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ meeting_key: `${N}.${T}`, text: say, pcm: viaSimli }) });
+        if (a.ok && viaSimli && simliReady) {
+          // 16kHz 16-bit PCM straight into her Simli face, which plays it with synced lips.
+          const pcm = new Uint8Array(await a.arrayBuffer());
+          setState("speaking", "Speaking");
+          showCaption(say);
+          remember("Cora", say);
+          for (let i = 0; i < pcm.length; i += 6000) simli.sendAudioData(pcm.subarray(i, i + 6000));
+          await new Promise((done) => setTimeout(done, pcm.length / 32 + 700));
+          simliStopSoon();
+        } else if (a.ok && !viaSimli) {
           const audio = new Audio(URL.createObjectURL(await a.blob()));
           trackAudio(audio);
           setState("speaking", "Speaking");
