@@ -16,9 +16,12 @@
   .face img, .face video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
   .face video { opacity: 0; }
   .face video.on { opacity: 1; }
-  #talk { transition: opacity .18s ease; }
-  /* Without a talking clip, the listening clip gets a little life from her voice instead. */
-  .face.solo.voiced #idle { animation: sway 2.6s ease-in-out infinite; }
+  #idle { transition: opacity .3s ease; }
+  /* The talking face: her photo with the jaw moved in time with her voice (WebGL, see below). */
+  #mouth { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity .3s ease; }
+  .face.gl #mouth { opacity: 1; }
+  .face.gl.talking #mouth { animation: sway 3.2s ease-in-out infinite; }
+  .face.talking #idle { opacity: 0; }
   @keyframes sway { 0%,100% { transform: scale(1.012) translateY(0) rotate(0); } 33% { transform: scale(1.016) translateY(-3px) rotate(.25deg); } 66% { transform: scale(1.014) translateY(2px) rotate(-.2deg); } }
   .face::after { content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 0 var(--lime); transition: box-shadow .25s; pointer-events: none; }
   .speaking .face::after { box-shadow: inset 0 0 0 5px var(--lime); }
@@ -36,10 +39,10 @@
 </head>
 <body>
 <div class="stage" id="stage">
-  <div class="face solo" id="face">
+  <div class="face" id="face">
     <img src="cora-1024.jpg?v=2" alt="Cora Whitley">
     <video id="idle" src="cora-idle.mp4?v=1" muted loop playsinline autoplay preload="auto"></video>
-    <video id="talk" src="cora-talk.mp4?v=1" muted loop playsinline autoplay preload="auto"></video>
+    <canvas id="mouth" width="1024" height="1024"></canvas>
   </div>
   <div class="side">
     <div class="brand"><b>ForgeX</b> · AI Chief of Staff</div>
@@ -88,16 +91,68 @@ function showCaption(text) {
   captionTimer = setTimeout(() => (captionEl.textContent = ""), 9000);
 }
 
-// ---- Avatar: the listening clip loops all the time; the talking clip fades in while her voice is
-// actually audible (word by word, not for the whole turn), so her mouth stops in the pauses.
+// ---- Avatar. Listening: a looping clip of her blinking and nodding (cora-idle.mp4, if present).
+// Talking: her photo drawn in WebGL with the jaw opened by the loudness of her voice, frame by frame,
+// so the mouth moves with each syllable and closes in the pauses. All of it runs in this page.
 const face = document.getElementById("face");
-const idleV = document.getElementById("idle"), talkV = document.getElementById("talk");
-let hasIdle = false, hasTalk = false;
-const ready = (v, on) => { v.addEventListener("canplay", () => { on(); v.classList.add("on"); v.play().catch(() => {}); }, { once: true }); };
-ready(idleV, () => { hasIdle = true; });
-ready(talkV, () => { hasTalk = true; face.classList.remove("solo"); talkV.classList.remove("on"); });
-talkV.addEventListener("error", () => talkV.remove());
+const idleV = document.getElementById("idle");
+idleV.addEventListener("canplay", () => { idleV.classList.add("on"); idleV.play().catch(() => {}); }, { once: true });
 idleV.addEventListener("error", () => idleV.remove());
+
+const mouth = (() => {
+  const cv = document.getElementById("mouth");
+  const gl = cv.getContext("webgl", { premultipliedAlpha: false });
+  if (!gl) return null;
+  const vs = `attribute vec2 p; varying vec2 uv; void main(){ uv = vec2(p.x*.5+.5, .5-p.y*.5); gl_Position = vec4(p,0.,1.); }`;
+  // Coordinates are in the 1024px photo. The split line runs along the bottom of the upper teeth and
+  // curves up to the mouth corners. Everything below it (lower lip, chin) slides down by D, fading
+  // out toward the jawline; the gap that opens is the inside of the mouth.
+  const fs = `precision mediump float; varying vec2 uv; uniform sampler2D img; uniform float openPx;
+    void main(){
+      vec2 px = uv * 1024.;
+      float dx = px.x - 531.;
+      float split = 459. - 20. * pow(clamp(abs(dx) / 70., 0., 1.), 2.);
+      float wx = 1. - smoothstep(48., 96., abs(dx));
+      float wy = 1. - smoothstep(505., 585., px.y);
+      float D = openPx * wx;
+      vec4 col = texture2D(img, uv);
+      if (px.y > split && D > .01) {
+        float sy = px.y - D * wy;
+        if (sy < split) {
+          float g = (px.y - split) / max(D, 1.);              // 0 at the upper teeth, 1 at the lower lip
+          vec3 inside = mix(vec3(.16,.05,.06), vec3(.33,.12,.13), smoothstep(.0, .9, g) * (1. - smoothstep(30., 70., abs(dx))));
+          inside = mix(inside, vec3(.82,.79,.75), smoothstep(.72, 1., g) * .55 * (1. - smoothstep(25., 55., abs(dx)))); // lower teeth hint
+          float edge = smoothstep(0., 2.5, px.y - split);
+          col = vec4(mix(texture2D(img, vec2(uv.x, (split - .5) / 1024.)).rgb, inside, edge), 1.);
+        } else {
+          col = texture2D(img, vec2(uv.x, sy / 1024.));
+        }
+      }
+      gl_FragColor = col;
+    }`;
+  const sh = (t, src) => { const o = gl.createShader(t); gl.shaderSource(o, src); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
+  const pr = gl.createProgram();
+  gl.attachShader(pr, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(pr, sh(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(pr); gl.useProgram(pr);
+  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(pr, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const uOpen = gl.getUniformLocation(pr, "openPx");
+  const tex = gl.createTexture();
+  let loaded = false;
+  const img = new Image();
+  img.onload = () => {
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    loaded = true; draw(0);
+  };
+  img.src = "cora-1024.jpg?v=2";
+  function draw(openPx) { if (!loaded) return; gl.viewport(0, 0, 1024, 1024); gl.uniform1f(uOpen, openPx); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); }
+  return { draw, ok: () => loaded };
+})();
 
 let ac = null, ttsAnalyser = null, ttsBuf = null;
 function ttsLevel() {
@@ -106,29 +161,42 @@ function ttsLevel() {
   let sum = 0; for (const b of ttsBuf) { const x = (b - 128) / 128; sum += x * x; }
   return Math.sqrt(sum / ttsBuf.length);
 }
-// Route a spoken <audio> through an analyser so the face can follow it. Still plays out loud.
+// Route a spoken <audio> through an analyser so the face can follow it. It still plays out loud.
 function trackAudio(el) {
   try {
     ac = ac || new AudioContext();
     const src = ac.createMediaElementSource(el);
-    ttsAnalyser = ac.createAnalyser(); ttsAnalyser.fftSize = 1024;
+    ttsAnalyser = ac.createAnalyser(); ttsAnalyser.fftSize = 512; ttsAnalyser.smoothingTimeConstant = 0;
     ttsBuf = new Uint8Array(ttsAnalyser.fftSize);
     src.connect(ttsAnalyser); ttsAnalyser.connect(ac.destination);
     ac.resume?.();
   } catch (e) { ttsAnalyser = null; }
 }
-let lastVoice = 0;
+let lastVoice = -1e9, open = 0;
+const MAX_OPEN = 24;  // px of jaw drop at full volume, in the 1024px photo
 function avatarTick() {
   let level = ttsLevel();
-  try { if (convo) level = Math.max(level, convo.getOutputVolume?.() || 0); } catch {}
+  try { if (convo) level = Math.max(level, (convo.getOutputVolume?.() || 0) * 0.5); } catch {}
   const now = performance.now();
-  if (level > 0.035) lastVoice = now;
-  const voiced = now - lastVoice < 220;   // hold through tiny gaps between words
-  if (hasTalk) talkV.classList.toggle("on", voiced);
-  face.classList.toggle("voiced", voiced);
+  if (level > 0.02) lastVoice = now;
+  // Fast open, slower close, like a real jaw. Small jitter so held vowels don't look frozen.
+  const target = Math.min(1, Math.max(0, (level - 0.015) * 7)) * (0.85 + 0.15 * Math.sin(now / 47));
+  open += (target - open) * (target > open ? 0.55 : 0.25);
+  const talking = now - lastVoice < 900;      // stay on the talking face through short pauses
+  if (mouth) {
+    face.classList.toggle("gl", talking || !idleV.isConnected || !idleV.classList.contains("on"));
+    mouth.draw(open * MAX_OPEN);
+  }
+  face.classList.toggle("talking", talking);
   requestAnimationFrame(avatarTick);
 }
 requestAnimationFrame(avatarTick);
+// Local check: coraPlay("some.wav") plays a file through the face.
+window.coraPlay = async (url) => {
+  const audio = new Audio(url); trackAudio(audio); setState("speaking", "Speaking");
+  await new Promise((done) => { audio.onended = done; audio.onerror = done; audio.play().catch(done); });
+  setState("", "Listening");
+};
 // Preview without a meeting: ?demo=1 plays a line so the face can be checked.
 window.coraDemo = async (text = "Hi everyone, I'm Cora, ForgeX's AI chief of staff. Great to be co-hosting with Davis today.") => {
   const a = await fetch(`${FN}/tts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ meeting_key: `${N}.${T}`, text }) });
