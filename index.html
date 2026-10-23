@@ -45,7 +45,7 @@
   <div class="lower">
     <div>
       <div class="name">Cora Whitley</div>
-      <div class="role"><b>ForgeX</b> · AI Chief of Staff</div>
+      <div class="role"><b>ForgeX</b> · GTM Analyst &amp; Chief of Staff</div>
     </div>
     <div class="pill"><span class="dot"></span><span id="status">Listening</span></div>
   </div>
@@ -259,7 +259,7 @@ window.coraPlay = async (url) => {
   setState("", "Listening");
 };
 // Preview without a meeting: ?demo=1 plays a line so the face can be checked.
-window.coraDemo = async (text = "Hi everyone, I'm Cora, ForgeX's AI chief of staff. Great to be co-hosting with Davis today.") => {
+window.coraDemo = async (text = "Hi everyone, I'm Cora, ForgeX's AI GTM analyst and chief of staff. Great to be co-hosting with Davis today.") => {
   const a = await fetch(`${FN}/tts`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ meeting_key: `${N}.${T}`, text }) });
   if (!a.ok) return console.warn("tts", a.status);
   const audio = new Audio(URL.createObjectURL(await a.blob()));
