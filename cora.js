@@ -225,13 +225,13 @@ async function connect(speaker) {
   setState("thinking", "Listening");
   simliStart();
   try {
-    const r = await fetch(`${FN}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: N, t: T }) });
-    const { signed_url, internal, room } = await r.json();
+    const r = await fetch(`${FN}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ n: N, t: T, speaker: speaker || "", zoom_id: lastZoomId }) });
+    const { signed_url, internal, room, person_history } = await r.json();
     if (!signed_url) throw new Error("no session");
     convo = await Conversation.startSession({
       signedUrl: signed_url,
       libsampleratePath: "./libsamplerate-2.1.2.worklet.js",   // local copy; the SDK would otherwise fetch it from jsdelivr
-      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent(), meeting_key: `${N}.${T}`, meeting_internal: internal ? "yes" : "no (outsiders may be present)", meeting_room: room || "Unknown room: assume outsiders may be present.", already_spoke: alreadySpoke ? "yes" : "no" },
+      dynamicVariables: { meeting_title: TITLE, asked_by: speaker || "someone", recent_transcript: recent(), meeting_key: `${N}.${T}`, meeting_internal: internal ? "yes" : "no (outsiders may be present)", meeting_room: room || "Unknown room: assume outsiders may be present.", already_spoke: alreadySpoke ? "yes" : "no", person_history: person_history || "(none)" },
       // The mic stays muted for the whole session: Cora only hears what is addressed to her, as text.
       // An open mic fed the whole room to her as one endless turn, so she never got to finish a task.
       onModeChange: ({ mode }) => {
@@ -246,7 +246,7 @@ async function connect(speaker) {
         if (simliReady) { simli.sendAudioData(b64ToU8(b64)); if (!voiceMuted) { convo?.setVolume({ volume: 0 }); voiceMuted = true; } }
         else if (voiceMuted) { convo?.setVolume({ volume: 1 }); voiceMuted = false; }
       },
-      onMessage: ({ source, message }) => { if (source === "ai" && message) { showCaption(message); remember("Cora", message); } touch(); },
+      onMessage: ({ source, message }) => { if (source === "ai" && message) { showCaption(message); remember("Cora", message); said("cora", message); } touch(); },
       onDisconnect: () => { convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
       onError: () => { convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
     });
@@ -286,6 +286,14 @@ function settle() {
   send();
 }
 
+// One Cora memory: what Cora says, and follow-ups to her, join the asker's history on the server
+// (which decides who the asker is; the page only reports the words).
+function said(role, text) {
+  fetch(`${FN}/said`, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ meeting_key: `${N}.${T}`, role, text }) }).catch(() => {});
+}
+let lastZoomId = "";
+
 let heard = function (speaker, text, final) {
   const waking = WAKE.test(text);
   // Session already open: pass along only what's addressed to Cora (her name, or her asker
@@ -293,6 +301,7 @@ let heard = function (speaker, text, final) {
   if (convo && pending?.sent) {
     if (final && (waking || (Date.now() < followUntil && speaker === pending.speaker))) {
       remember(speaker || "Someone", text);
+      if (!waking) said("person", text); // wake lines are already logged by /heard
       convo.sendUserMessage(`${speaker || "Someone"} said: "${text}"`);
       followUntil = 0;
       touch();
@@ -327,6 +336,7 @@ function connectTranscript() {
     const { text, speaker, final, isHost, zoomId } = words(msg);
     if (!text || SELF.test(speaker)) return;
     // Tell the server who is addressing Cora (host flag and Zoom account id), so actions on Davis's behalf only follow Davis.
+    if (WAKE.test(text)) lastZoomId = zoomId || "";
     if (final && WAKE.test(text)) {
       fetch(`${FN}/heard`, { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ meeting_key: `${N}.${T}`, speaker, is_host: isHost, zoom_id: zoomId, text }) }).catch(() => {});
