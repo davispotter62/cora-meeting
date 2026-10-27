@@ -314,21 +314,22 @@ function words(msg) {
   const w = d?.words ?? [];
   const speaker = d?.speaker ?? d?.participant?.name ?? "";
   const isHost = d?.participant?.is_host === true;
+  const zoomId = d?.participant?.extra_data?.zoom?.conf_user_id ?? "";
   const ev = String(msg?.event ?? "");
   const final = d?.is_final === false || /partial/.test(ev) ? false : true;
-  return { text: w.map((x) => x.text).join(" ").trim(), speaker, final, isHost };
+  return { text: w.map((x) => x.text).join(" ").trim(), speaker, final, isHost, zoomId };
 }
 
 function connectTranscript() {
   const ws = new WebSocket("wss://meeting-data.bot.recall.ai/api/v1/transcript");
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
-    const { text, speaker, final, isHost } = words(msg);
+    const { text, speaker, final, isHost, zoomId } = words(msg);
     if (!text || SELF.test(speaker)) return;
-    // Tell the server who is addressing Cora, so actions on Davis's behalf only follow the host.
+    // Tell the server who is addressing Cora (host flag and Zoom account id), so actions on Davis's behalf only follow Davis.
     if (final && WAKE.test(text)) {
       fetch(`${FN}/heard`, { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ meeting_key: `${N}.${T}`, speaker, is_host: isHost, text }) }).catch(() => {});
+        body: JSON.stringify({ meeting_key: `${N}.${T}`, speaker, is_host: isHost, zoom_id: zoomId, text }) }).catch(() => {});
     }
     heard(speaker, text, final);
   };
