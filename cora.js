@@ -24,6 +24,16 @@ let pending = null;      // the utterance that woke Cora: {speaker, text, timer,
 let alreadySpoke = false; // Cora has spoken in this meeting (no second introduction)
 let followUntil = 0;      // after Cora answers, her asker can follow up without saying "Cora" again
 let idleTimer = null;
+// When her voice session won't start (e.g. ElevenLabs out of credits), back off instead of retrying on
+// every partial transcript, and tell Davis privately once every 10 minutes so she never just goes silent.
+let voiceDownUntil = 0, lastVoiceNote = 0;
+function voiceDown(text) {
+  voiceDownUntil = Date.now() + 60000;
+  if (Date.now() - lastVoiceNote < 600000) return;
+  lastVoiceNote = Date.now();
+  fetch(`${FN}/voice-down`, { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ meeting_key: `${N}.${T}`, text: text || "" }) }).catch(() => {});
+}
 let voiceMuted = false;   // the SDK's speaker is muted because Simli is playing her voice     // close the session once Cora is done, so room talk never reaches her
 
 function remember(speaker, text) {
@@ -220,8 +230,10 @@ window.coraDemo = async (text = "Hi everyone, I'm Cora, ForgeX's AI GTM analyst 
 // finishes, hand over the full question as text and unmute for follow-ups. Avoids a double answer
 // from the voice channel and saves the connection time.
 async function connect(speaker) {
-  if (convo || starting) return;
+  if (convo || starting || Date.now() < voiceDownUntil) return;
   starting = true;
+  let live = false;   // the agent has actually done something in this session
+  const failed = () => { if (!live) voiceDown(pending?.text); };
   setState("thinking", "Listening");
   simliStart();
   try {
@@ -236,6 +248,7 @@ async function connect(speaker) {
       // An open mic fed the whole room to her as one endless turn, so she never got to finish a task.
       onModeChange: ({ mode }) => {
         setState(mode === "speaking" ? "speaking" : "", mode === "speaking" ? "Speaking" : "Listening");
+        live = true;
         if (mode === "speaking") alreadySpoke = true;
         if (mode === "listening" && pending?.sent) followUntil = Date.now() + 12000;
         touch();
@@ -246,15 +259,16 @@ async function connect(speaker) {
         if (simliReady) { simli.sendAudioData(b64ToU8(b64)); if (!voiceMuted) { convo?.setVolume({ volume: 0 }); voiceMuted = true; } }
         else if (voiceMuted) { convo?.setVolume({ volume: 1 }); voiceMuted = false; }
       },
-      onMessage: ({ source, message }) => { if (source === "ai" && message) { showCaption(message); remember("Cora", message); said("cora", message); } touch(); },
-      onDisconnect: () => { convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
-      onError: () => { convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
+      onMessage: ({ source, message }) => { live = true; if (source === "ai" && message) { showCaption(message); remember("Cora", message); said("cora", message); } touch(); },
+      onDisconnect: () => { failed(); convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
+      onError: () => { failed(); convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
     });
     convo.setMicMuted(true);
     if (simliReady) { convo.setVolume({ volume: 0 }); voiceMuted = true; }
     if (pending?.ready) send();
   } catch (e) {
     console.error(e);
+    failed();
     convo = null;
     setState("", "Listening");
     simliStopSoon(1000);
