@@ -6,6 +6,7 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 const fmt = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "No date";
 document.getElementById("when").textContent = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 let last = "";
+const PAGE_V = 6; // bump with every change; the server sends the current version and old pages reload
 
 // Only https pages on ForgeX's own sites go in the frame. Anything else (javascript:, data:, other
 // hosts) shows as a card instead, whatever the server sends.
@@ -54,7 +55,8 @@ function render(d) {
 async function poll() {
   try {
     const r = await fetch(`${FN}/display`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ meeting_key: KEY }) });
-    const { display } = await r.json();
+    const { display, page_v } = await r.json();
+    if (page_v && page_v > PAGE_V) { location.replace(location.pathname + location.search.replace(/&v=[^&]*/, "") + "&v=" + Date.now()); return; }
     const s = JSON.stringify(display);
     if (s !== last) { last = s; render(display); }
   } catch {}
