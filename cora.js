@@ -276,6 +276,8 @@ async function connect(speaker) {
       // The mic stays muted for the whole session: Cora only hears what is addressed to her, as text.
       // An open mic fed the whole room to her as one endless turn, so she never got to finish a task.
       onModeChange: ({ mode }) => {
+        if (dropOld && mode === "listening") endDrop();   // the cut-off answer has finished streaming
+        if (dropOld) return;
         setState(mode === "speaking" ? "speaking" : "", mode === "speaking" ? "Speaking" : "Listening");
         live = true;
         if (mode === "speaking") alreadySpoke = true;
@@ -285,10 +287,12 @@ async function connect(speaker) {
       // Her voice goes to Simli (which plays it with synced lips); the SDK's own playback is muted
       // while Simli is up, so she is never heard twice.
       onAudio: (b64) => {
+        if (dropOld) return;   // the rest of an answer she was cut off from
         lastAudioAt = Date.now();
         if (simliReady) { simli.sendAudioData(b64ToU8(b64)); if (!voiceMuted) { convo?.setVolume({ volume: 0 }); voiceMuted = true; } }
         else if (voiceMuted) { convo?.setVolume({ volume: 1 }); voiceMuted = false; }
       },
+      onInterruption: () => { try { simli?.ClearBuffer(); } catch {} endDrop(); },
       onMessage: ({ source, message }) => { live = true; if (source === "ai" && message) { showCaption(message); remember("Cora", message); said("cora", message); } touch(); },
       onDisconnect: () => { failed(); convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
       onError: () => { failed(); convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
@@ -357,23 +361,39 @@ function isStop(text, speakingNow) {
   return speakingNow && hard && t.split(" ").length <= 4;   // a bare "stop" counts only while she is talking
 }
 let stoppedAt = 0, outAudio = null;
-function stopNow() {
-  if (Date.now() - stoppedAt < 1500) return;
-  stoppedAt = Date.now();
+// Cutting her off never ends the conversation (Nov 12 2026, Davis: "never make her go mute"). Her face's
+// queued audio is cleared and the rest of that answer is dropped, but the session stays open so she
+// acknowledges in a few words and answers whatever comes next, like a person who got interrupted.
+let dropOld = false, dropTimer = null;
+function endDrop() {
+  dropOld = false; clearTimeout(dropTimer);
+  if (convo && !simliReady) { try { convo.setVolume({ volume: 1 }); } catch {} }
+}
+function cutVoice() {
   try { simli?.ClearBuffer(); } catch {}
   try { outAudio?.pause(); } catch {}
-  pending = null; followUntil = 0;
-  const c = convo; convo = null;
-  if (c) { try { c.setVolume({ volume: 0 }); } catch {} try { c.endSession(); } catch {} }
-  clearTimeout(idleTimer); clearTimeout(captionTimer); captionEl.textContent = "";
-  setState("", "Listening");
-  simliStopSoon();
+  clearTimeout(captionTimer); captionEl.textContent = "";
+  if (convo) {
+    dropOld = true; clearTimeout(dropTimer); dropTimer = setTimeout(endDrop, 20000);
+    try { convo.setVolume({ volume: 0 }); } catch {}
+  }
+  setState(convo ? "thinking" : "", "Listening");
 }
-let lastAudioAt = 0;   // her face keeps playing buffered audio for a few seconds after the stream ends
 const isSpeaking = () => speakingOut || stage.className.includes("speaking") || Date.now() - lastAudioAt < 6000;
 
 let heard = function (speaker, text, final) {
-  if (isStop(text, isSpeaking())) { stopNow(); return; }
+  if (isStop(text, isSpeaking())) {
+    if (Date.now() - stoppedAt > 1500) { stoppedAt = Date.now(); cutVoice(); }   // cut on the partial, fast
+    if (!final) return;
+    remember(speaker || "Someone", text);
+    if (convo) {
+      pending = { speaker, text, sent: true, ready: true };
+      convo.sendUserMessage(`${speaker || "Someone"} cut you off: "${text}". Drop that answer. Acknowledge in two to four words, then wait for them.`);
+      followUntil = Date.now() + 20000;   // they can carry on without saying "Cora" again
+      touch();
+    }
+    return;
+  }
   const waking = WAKE.test(text);
   // Session already open: pass along only what's addressed to Cora (her name, or her asker
   // following up right after she answered). Everything else in the room stays out.
@@ -381,6 +401,7 @@ let heard = function (speaker, text, final) {
     if (final && (waking || (Date.now() < followUntil && speaker === pending.speaker))) {
       remember(speaker || "Someone", text);
       if (!waking) said("person", text); // wake lines are already logged by /heard
+      if (isSpeaking()) cutVoice();   // talking over her: she stops and takes the new question
       convo.sendUserMessage(`${speaker || "Someone"} said: "${text}"`);
       followUntil = 0;
       touch();
