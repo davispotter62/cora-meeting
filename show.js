@@ -28,6 +28,17 @@ function render(d) {
     frame.referrerPolicy = "no-referrer";
     frame.src = url;
     view.appendChild(frame);
+  } else if (d.kind === "slide") {
+    // Only signed links from ForgeX's research store; the CSP blocks every other image host too.
+    let ok = false;
+    try { const u = new URL(String(d.image)); ok = u.protocol === "https:" && u.hostname === "gibskbbpskfnimrpddkj.supabase.co"; } catch {}
+    if (!ok) { view.innerHTML = '<div class="idle">That slide can't be shown here.</div>'; return; }
+    view.innerHTML = `<div class="slide"></div><div class="src">${esc(d.source)}${d.title ? " · " + esc(d.title) : ""}</div>`;
+    const img = document.createElement("img");
+    img.alt = String(d.title ?? "");
+    img.referrerPolicy = "no-referrer";
+    img.src = d.image;
+    view.querySelector(".slide").appendChild(img);
   } else if (d.kind === "program") {
     const today = new Date().toISOString().slice(0, 10);
     view.innerHTML = `<h1>${esc(d.title)}</h1><div class="timeline">` +

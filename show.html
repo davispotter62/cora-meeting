@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=1280, height=720">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://cbtbnjbdcdqmvlolzdlt.supabase.co; frame-src https://forgex.ai https://*.forgex.ai https://futurexgtm.com https://*.futurexgtm.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://gibskbbpskfnimrpddkj.supabase.co; connect-src https://cbtbnjbdcdqmvlolzdlt.supabase.co; frame-src https://forgex.ai https://*.forgex.ai https://futurexgtm.com https://*.futurexgtm.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>Cora · ForgeX</title>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;600&family=Newsreader:opsz,wght@6..72,500&display=swap" rel="stylesheet">
@@ -24,6 +24,9 @@
   .row .owner, .row .stage { color: var(--muted); font-size: 17px; }
   .row.late .due { color: #ff7a6b; }
   iframe { flex: 1; border: 0; background: #fff; }
+  .slide { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+  .slide img { max-width: 100%; max-height: 100%; object-fit: contain; background: #fff; }
+  .src { color: var(--muted); font-size: 16px; margin-top: 12px; }
   .idle { margin: auto; color: var(--muted); font-size: 24px; }
 </style>
 </head>
