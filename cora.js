@@ -379,6 +379,7 @@ function cutVoice() {
   }
   setState(convo ? "thinking" : "", "Listening");
 }
+let lastAudioAt = 0;
 const isSpeaking = () => speakingOut || stage.className.includes("speaking") || Date.now() - lastAudioAt < 6000;
 
 let heard = function (speaker, text, final) {
