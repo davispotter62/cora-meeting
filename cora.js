@@ -348,7 +348,7 @@ let lastZoomId = "";
 // "Cora, stop" cuts her off on the spot (Nov 12 2026). Handled here, not by the agent: by the time the
 // agent hears it, seconds of her answer are already queued in the face. Only short commands count, so a
 // question like "Cora, how do we stop chasing MQLs?" still goes through to her.
-const STOP_HARD = /\b(stop talking|stop|that'?s enough|enough|hold on|hold up|be quiet|quiet|shush|hush|zip it|cut it)\b/;
+const STOP_HARD = /\b(stop talking|stop|don'?t talk|never ?mind|forget it|that'?s enough|enough|hold on|hold up|be quiet|quiet|shush|hush|zip it|cut it)\b/;
 const STOP_SOFT = /^(thanks|thank you|thanks so much|thank you so much|that'?s (good|great|perfect|it|fine|plenty)|got it|perfect|great|nice|awesome|love it)$/;
 const STOP_FILLER = new Set(["thanks", "thank", "you", "talking", "please", "there", "it", "a", "sec", "second", "minute", "moment", "for", "can", "go", "ahead", "and", "just", "right", "i", "think", "we're", "were", "good", "that's", "thats"]);
 function isStop(text, speakingNow) {
