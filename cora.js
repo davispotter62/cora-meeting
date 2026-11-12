@@ -28,7 +28,7 @@ let idleTimer = null;
 // every partial transcript, and tell Davis privately once every 10 minutes so she never just goes silent.
 let voiceDownUntil = 0, lastVoiceNote = 0;
 function voiceDown(text) {
-  voiceDownUntil = Date.now() + 60000;
+  voiceDownUntil = Date.now() + 8000;   // retry quickly: a real failure should never leave her mute for a minute
   if (Date.now() - lastVoiceNote < 600000) return;
   lastVoiceNote = Date.now();
   fetch(`${FN}/voice-down`, { method: "POST", headers: { "content-type": "application/json" },
