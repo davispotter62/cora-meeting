@@ -285,6 +285,7 @@ async function connect(speaker) {
       // Her voice goes to Simli (which plays it with synced lips); the SDK's own playback is muted
       // while Simli is up, so she is never heard twice.
       onAudio: (b64) => {
+        lastAudioAt = Date.now();
         if (simliReady) { simli.sendAudioData(b64ToU8(b64)); if (!voiceMuted) { convo?.setVolume({ volume: 0 }); voiceMuted = true; } }
         else if (voiceMuted) { convo?.setVolume({ volume: 1 }); voiceMuted = false; }
       },
@@ -340,7 +341,39 @@ function said(role, text) {
 }
 let lastZoomId = "";
 
+// "Cora, stop" cuts her off on the spot (Nov 12 2026). Handled here, not by the agent: by the time the
+// agent hears it, seconds of her answer are already queued in the face. Only short commands count, so a
+// question like "Cora, how do we stop chasing MQLs?" still goes through to her.
+const STOP_HARD = /\b(stop talking|stop|that'?s enough|enough|hold on|hold up|be quiet|quiet|shush|hush|zip it|cut it)\b/;
+const STOP_SOFT = /^(thanks|thank you|thanks so much|thank you so much|that'?s (good|great|perfect|it|fine|plenty)|got it|perfect|great|nice|awesome|love it)$/;
+const STOP_FILLER = new Set(["thanks", "thank", "you", "talking", "please", "there", "it", "a", "sec", "second", "minute", "moment", "for", "can", "go", "ahead", "and", "just", "right", "i", "think", "we're", "were", "good", "that's", "thats"]);
+function isStop(text, speakingNow) {
+  const t = text.toLowerCase().replace(/[^a-z' ]/g, " ").replace(/\s+/g, " ").trim();
+  const core = t.replace(new RegExp(WAKE.source, "gi"), " ").replace(/\b(hey|hi|ok|okay|please|you can|now|alright|all right|so)\b/g, " ").replace(/\s+/g, " ").trim();
+  // Hard stop: a stop phrase plus nothing but filler ("Cora, stop", "hey Cora thanks you can stop talking").
+  const rest = core.replace(new RegExp(STOP_HARD.source, "g"), " ").trim().split(/\s+/).filter(Boolean);
+  const hard = STOP_HARD.test(core) && rest.every((w) => STOP_FILLER.has(w));
+  if (WAKE.test(text)) return hard || (speakingNow && STOP_SOFT.test(core));
+  return speakingNow && hard && t.split(" ").length <= 4;   // a bare "stop" counts only while she is talking
+}
+let stoppedAt = 0, outAudio = null;
+function stopNow() {
+  if (Date.now() - stoppedAt < 1500) return;
+  stoppedAt = Date.now();
+  try { simli?.ClearBuffer(); } catch {}
+  try { outAudio?.pause(); } catch {}
+  pending = null; followUntil = 0;
+  const c = convo; convo = null;
+  if (c) { try { c.setVolume({ volume: 0 }); } catch {} try { c.endSession(); } catch {} }
+  clearTimeout(idleTimer); clearTimeout(captionTimer); captionEl.textContent = "";
+  setState("", "Listening");
+  simliStopSoon();
+}
+let lastAudioAt = 0;   // her face keeps playing buffered audio for a few seconds after the stream ends
+const isSpeaking = () => speakingOut || stage.className.includes("speaking") || Date.now() - lastAudioAt < 6000;
+
 let heard = function (speaker, text, final) {
+  if (isStop(text, isSpeaking())) { stopNow(); return; }
   const waking = WAKE.test(text);
   // Session already open: pass along only what's addressed to Cora (her name, or her asker
   // following up right after she answered). Everything else in the room stays out.
@@ -417,7 +450,7 @@ async function sayLoop() {
           simliStopSoon();
         } else if (a.ok && !viaSimli) {
           const audio = new Audio(URL.createObjectURL(await a.blob()));
-          trackAudio(audio);
+          trackAudio(audio); outAudio = audio;
           setState("speaking", "Speaking");
           showCaption(say);
           remember("Cora", say);
