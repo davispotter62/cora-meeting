@@ -292,6 +292,9 @@ async function connect(speaker) {
       onDisconnect: () => { failed(); convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
       onError: () => { failed(); convo = null; pending = null; voiceMuted = false; clearTimeout(idleTimer); setState("", "Listening"); simliStopSoon(); },
     });
+    // Connected = her voice service is up. A session that connects and then ends quietly (she skipped
+    // her turn because she was told to stop, or nobody followed up) is not a failure (Nov 12 2026).
+    live = true;
     convo.setMicMuted(true);
     if (simliReady) { convo.setVolume({ volume: 0 }); voiceMuted = true; }
     if (pending?.ready) send();
