@@ -71,9 +71,19 @@ const mouth = (() => {
   // frame stays up between answers, so the still and the moving face never jump.
   const still = document.createElement("canvas"); still.width = 1280; still.height = 720;
   const sctx = still.getContext("2d"); let haveStill = false;
+  // Fit the whole video in the frame (no zoom-in crop); the side gaps are filled by stretching the
+  // video's own left and right edge columns, which on a plain studio background reads as more wall.
   function cover(c, src, w, h) {
-    const s = Math.max(1280 / w, 720 / h), dw = w * s, dh = h * s;
-    c.drawImage(src, (1280 - dw) / 2, (720 - dh) / 2, dw, dh);
+    const s = Math.min(1280 / w, 720 / h), dw = w * s, dh = h * s, x = (1280 - dw) / 2, y = (720 - dh) / 2;
+    if (x > 1) {
+      c.drawImage(src, 0, 0, 2, h, 0, y, x + 1, dh);
+      c.drawImage(src, w - 2, 0, 2, h, x + dw - 1, y, x + 1, dh);
+    }
+    if (y > 1) {
+      c.drawImage(src, 0, 0, w, 2, 0, 0, 1280, y + 1);
+      c.drawImage(src, 0, h - 2, w, 2, 0, y + dh - 1, 1280, y + 1);
+    }
+    c.drawImage(src, x, y, dw, dh);
   }
   function draw(openPx, blink, live) {
     if (!loaded) return;
