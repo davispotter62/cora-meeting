@@ -32,7 +32,7 @@ function render(d) {
     // Only signed links from ForgeX's research store; the CSP blocks every other image host too.
     let ok = false;
     try { const u = new URL(String(d.image)); ok = u.protocol === "https:" && u.hostname === "gibskbbpskfnimrpddkj.supabase.co"; } catch {}
-    if (!ok) { view.innerHTML = '<div class="idle">That slide can't be shown here.</div>'; return; }
+    if (!ok) { view.innerHTML = `<div class="idle">That slide can't be shown here.</div>`; return; }
     view.innerHTML = `<div class="slide"></div><div class="src">${esc(d.source)}${d.title ? " · " + esc(d.title) : ""}</div>`;
     const img = document.createElement("img");
     img.alt = String(d.title ?? "");
