@@ -9,7 +9,7 @@ let last = "";
 
 // Only https pages on ForgeX's own sites go in the frame. Anything else (javascript:, data:, other
 // hosts) shows as a card instead, whatever the server sends.
-const FRAME_HOSTS = ["forgex.ai", "futurexgtm.com"];
+const FRAME_HOSTS = ["forgex.ai", "futurexgtm.com", "gtminnovationsummit.com"];
 function safeFrameUrl(raw) {
   let u;
   try { u = new URL(String(raw ?? "")); } catch { return null; }
@@ -23,10 +23,11 @@ function render(d) {
   if (d.kind === "webpage") {
     const url = safeFrameUrl(d.url);
     if (!url) { view.innerHTML = `<h1>${esc(d.title)}</h1><div class="idle">That page can't be shown here.</div>`; return; }
-    view.innerHTML = `<h1>${esc(d.title)}</h1>`;
+    view.innerHTML = d.title ? `<h1>${esc(d.title)}</h1>` : "";
     const frame = document.createElement("iframe");
     frame.referrerPolicy = "no-referrer";
     frame.src = url;
+    if (!d.title) frame.className = "full";
     view.appendChild(frame);
   } else if (d.kind === "slide") {
     // Only signed links from ForgeX's research store; the CSP blocks every other image host too.
