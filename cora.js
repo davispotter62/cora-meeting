@@ -52,21 +52,39 @@ function showCaption(text) {
 // renders the same in Recall's headless bot): breathing (CSS), blinks every few seconds, and the jaw
 // opened by the loudness of her voice, syllable by syllable.
 const face = document.getElementById("face");
+// face=trinity: her Trinity-2 Simli face fills the frame. Default (legacy): the old lobby
+// photo with the Simli square inside it. always=1 keeps the face live (idle motion) all meeting.
+const FULL_FACE = q.get("face") === "trinity";
+const FACE_ALWAYS = q.get("always") === "1";
 const mouth = (() => {
   const cv = document.getElementById("mouth");
   const ctx = cv.getContext("2d");
   const img = new Image();
   let loaded = false;
   img.onload = () => { loaded = true; };
-  img.src = "cora-lobby.jpg?v=1";   // 1280x720, the full frame
+  img.src = FULL_FACE ? "cora-studio.jpg?v=1" : "cora-lobby.jpg?v=1";   // 1280x720, the full frame
   // Her Simli face was built from the square of this photo around her head: x 292.6, width 714.4, full height.
   const SQ_X = 292.6, SQ_W = 714.4, FEATHER = 36;
   // Eyes in the 1280x720 photo: centre x, half width, lash line y, opening height.
   const EYES = [{ cx: 585, hw: 27, lash: 227, h: 14 }, { cx: 703, hw: 31, lash: 226, h: 14 }];
+  // Trinity faces stream the whole framed portrait, so they fill the frame (cover). The last live
+  // frame stays up between answers, so the still and the moving face never jump.
+  const still = document.createElement("canvas"); still.width = 1280; still.height = 720;
+  const sctx = still.getContext("2d"); let haveStill = false;
+  function cover(c, src, w, h) {
+    const s = Math.max(1280 / w, 720 / h), dw = w * s, dh = h * s;
+    c.drawImage(src, (1280 - dw) / 2, (720 - dh) / 2, dw, dh);
+  }
   function draw(openPx, blink, live) {
     if (!loaded) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
+    if (FULL_FACE) {
+      if (live && live.videoWidth) { cover(ctx, live, live.videoWidth, live.videoHeight); cover(sctx, live, live.videoWidth, live.videoHeight); haveStill = true; }
+      else if (haveStill) ctx.drawImage(still, 0, 0);
+      else cover(ctx, img, img.naturalWidth || 1280, img.naturalHeight || 720);
+      return;
+    }
     ctx.drawImage(img, 0, 0, 1280, 720);
     if (live && live.videoWidth) {
       ctx.drawImage(live, SQ_X, 0, SQ_W, 720);
@@ -119,7 +137,7 @@ function simliStart() {
         setTimeout(() => res(false), 9000);
       });
       if (!ok) { try { c.stop(); } catch {} return false; }
-      c.on("stop", () => { if (simli === c) { simli = null; simliReady = false; } });
+      c.on("stop", () => { if (simli === c) { simli = null; simliReady = false; if (FACE_ALWAYS) setTimeout(() => simliStart(), 1500); } });
       c.sendAudioData(new Uint8Array(6000));   // primes the stream, as Simli's own samples do
       simli = c; simliReady = true;
       simVideo.play().catch(() => {});
@@ -131,6 +149,7 @@ function simliStart() {
 }
 function simliStopSoon(ms = 20000) {
   clearTimeout(simliStopTimer);
+  if (FACE_ALWAYS) return;   // stays live; it is restarted below whenever Simli ends the session
   simliStopTimer = setTimeout(() => { const c = simli; simli = null; simliReady = false; try { c?.stop(); } catch {} }, ms);
 }
 const simliLive = () => simliReady && simVideo.videoWidth > 0 && simVideo.readyState >= 2;
@@ -401,3 +420,6 @@ async function sayLoop() {
 
 if (!N || !T) setState("", "Not connected");
 else { setState("", "Listening"); connectTranscript(); sayLoop(); }
+
+// Always-on face: open Simli as soon as the page loads, and reopen it if it drops.
+if (FACE_ALWAYS) { setTimeout(() => simliStart(), 1500); setInterval(() => { if (!simliReady && !simliStarting) simliStart(); }, 20000); }
