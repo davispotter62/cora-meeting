@@ -33,7 +33,7 @@ function render(d) {
     let ok = false;
     try { const u = new URL(String(d.image)); ok = u.protocol === "https:" && u.hostname === "gibskbbpskfnimrpddkj.supabase.co"; } catch {}
     if (!ok) { view.innerHTML = `<div class="idle">That slide can't be shown here.</div>`; return; }
-    view.innerHTML = `<div class="slide"></div><div class="src">${esc(d.source)}${d.title ? " · " + esc(d.title) : ""}</div>`;
+    view.innerHTML = `<div class="slide"></div>`; // the whole slide fills the share, nothing else on screen
     const img = document.createElement("img");
     img.alt = String(d.title ?? "");
     img.referrerPolicy = "no-referrer";
